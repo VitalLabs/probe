@@ -27,11 +27,13 @@
 (defn console-raw
   "Print state vectors to the console"
   [state]
-  (println (state->string state)))
+  (println (state->string state))
+  state)
 
 (defn console-log
   [state]
-  (println (state->log-string state)))
+  (println (state->log-string state))
+  state)
 
 ;; LOGGER SINK
 
@@ -59,7 +61,9 @@
   "Save state to the provided atom or the global atom (for all state)"
   ([state]
      (memory state global))
-  ([state atom]
-     (swap! atom conj state)))
+  ([state ref]
+     (let [atom (if (atom ref) ref (var-get (resolve ref)))]
+       (swap! atom conj state)
+       state)))
 
 

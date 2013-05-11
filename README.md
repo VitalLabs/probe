@@ -97,23 +97,45 @@ programs already have wonderful probe points available, they're called functions
 	(testprobe 1 2)
     => 3
 
-    (p/set-config! 'user #{:enter-fn} :console)
+    (p/set-config! 'user :enter-fn :console)
 
 	(testprobe 1 2)
 	2013-05-10T23:28.627 user:1 {:args (1 2), :fn :enter, :fname testprobe}
 	=> 3
 
-    (p/set-config! 'user #{:fn} :console)
+	(p/remove-config! 'user :enter-fn)
+    (p/set-config! 'user :fn :console)
 	(defn testprobe [a b] (+ 1 a b))
 	(testprobe 1 2)
     2013-05-10T23:30.522 user:1 {:args (1 2), :fn :enter, :fname testprobe}
     2013-05-10T23:30.522 user:1 {:return 4, :args (1 2), :fn :exit, :fname testprobe}
-	=> 3
+	=> 3 ;; Wrapping survives redefinition
 
-    (p/set-config! 'user :exit-fn '[(select-keys [:return :args]) sink/console-raw])
+	(p/remove-config! 'user :fn)
+    (p/set-config! 'user #{:exit-fn :except-fn} 
+       '[(select-keys [:fname :return :args]) sink/console-raw])
+
+    (testprobe 1 2)
+    {:fname testprobe, :args (1 2), :return 4}
+    => 4
+
+This demonstrates generating test vectors from runtime for any
+function simply by probing the function and appropriately filtering
+the result.  What if we want to capture these vectors into memory for
+replay later?
+
+    (def my-tests (atom nil))
+    (p/set-config! 'user #{:exit-fn :except-fn}
+	   '[(select-keys [:fname :return :args]) (sink/memory my-tests)])
+    
+    (testprobe 1 4) 
+    (testprobe 1 5)
+    => 7
+
+    @my-tests
+    ({:args (1 5), :return 7, :fname testprobe} {:args (1 4), :return 6, :fname testprobe})
 
     
-	
 
 ## Discussion
 
@@ -132,7 +154,8 @@ Documented here are some
 * Grab the stack state from a probe point (for profiling later)
 * Add a simple dump of clojure data to a logfile, walk the data
   structure to ensure nothing unserializable causes errors?
-* 
+* Add higher level targeted function tracing / collection facilities
+  (e.g. trace 100 input/result vectors from function f or namespace ns)
 
 ### Future Tasks (Major)
 
