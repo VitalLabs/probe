@@ -1,4 +1,15 @@
-(ns clj-probe.policy)
+(ns probe.policy)
+
+(defn random-sample [state freq]
+  {:pre [(float? freq)]}
+  (when (<= (rand) freq)
+    state))
+
+(defn select-fn
+  [state fname]
+  {:pre [(symbol? fname)]}
+  (when ((set fname) (:fname state))
+    state))
 
 (defn system-ctx [state]
   (assoc state
@@ -15,4 +26,5 @@
 (defn remove-args [state key & ks]
   (dissoc state :args))
 
+  
   

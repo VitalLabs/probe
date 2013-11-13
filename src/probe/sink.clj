@@ -1,4 +1,4 @@
-(ns clj-probe.sink
+(ns probe.sink
   (require [clojure.string :as str]))
 
 (defn- state->string [state]
@@ -55,7 +55,13 @@
 
 ;; ## MEMORY SINK
 
-(def global (atom []))
+(defn make-memory []
+  (atom clojure.lang.PersistentQueue/EMPTY))
+
+(def global (atom (make-memory)))
+
+(defn reset-global-memory []
+  (reset! global (make-memory)))
 
 (defn memory
   "Save state to the provided atom or the global atom (for all state)"
@@ -66,4 +72,14 @@
        (swap! atom conj state)
        state)))
 
-
+(defn fixed-memory
+  ([state max]
+     (fixed-memory state global max))
+  ([state ref max]
+     (let [atom (if (= (class ref) clojure.lang.Atom)
+                  ref (var-get (resolve ref)))]
+       (assert (= (class atom) clojure.lang.Atom))
+       (if (>= (count @atom) max)
+         (swap! atom (fn [coll] (conj (pop coll) state)))
+         (swap! atom conj state)))))
+     

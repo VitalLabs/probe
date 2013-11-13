@@ -1,7 +1,10 @@
-(ns clj-probe.core
+(ns probe.core
+  (:refer-clojure :exclude [==])
+  (:use [clojure.core.logic])
   (:require [clj-probe.wrap :as w]
             [clojure.string :as str]
-            [clojure.set :as set]))
+            [clojure.set :as set]
+            [clojure.core.memoize :as memo]))
 
 (defn- as-sequence [value]
   (if (sequential? value) value
@@ -14,7 +17,7 @@
 ;; Policies
 ;; -----------------------
 
-;; Hierarchical catalog of named probe policies
+;; Hierarchical catalog of named policies
 ;; {:name [fn-fnsym-or-name fn-fnsym-or-name [:split ...]]}
 
 (defonce policies (atom {:default [identity]}))
@@ -37,109 +40,129 @@
 ;; Probe Configuration
 ;; ------------------------
 
-;; Current probe configuration
-;; {ns {tags1 policy2 tags2 policy2 ...}}
+;; Add new rules to generate policies
+;; lhs: tags + ns + fname 
+;; rhs: policy (:debug 
 
-(defonce config (atom {}))
-(def config-cache (atom {}))
+(defrel probe-rule ^:index scopes ^:index tags policy)
 
-(defn- set-config-cache!
-  "Keep explicit matches in a cache for fast lookup"
-  [ns tags policy]
-  {:pre [(set? tags)]}
-  (swap! config-cache assoc-in [ns tags] policy)
-  policy)
+(comment
+  (map (partial apply probe-rule)
+       [[ [ experiment ]
+               [ :warn ]
+               :log ]
+        [ [ experiment.infra ]
+          [ :debug ]
+          :log ]
+        [ [ experiment.infra.models 
+           experiment.infra.client ]
+          [ :info ]
+          :record ]]))
 
-(defn- clear-config-cache!
-  "When updating the configuration, we must clear the cache"
-  []
-  (reset! config-cache {}))
+;; For tags that encompass other tags
+;; e.g. :warn enables :error
+(defrel enables child parent)
 
-(defn- cached-config [ns tags]
-  ""
-  {:pre [(set? tags)]}
-  (get-in @config-cache [ns tags]))
+;; Log level rules
+(facts enables
+  [[:warn :error]
+   [:info :warn]
+   [:debug :info]
+   [:trace :debug]])
 
-(defn- unambiguous-tagset?
-  "No two tag sets should overlap at a given NS level"
-  [ns tags]
-  (empty? (apply set/intersection tags (keys (get @config ns)))))
+(defne expanded-tags [original expanded]
+  ([() ex] (== ex ()))
+  ([[f . rest] expanded]
+     (fresh [g ex2]
+       (enables f g)
+       (conso f expanded ex2)
+       (expanded-tags rest ex2)))
+  ([[f . rest] ex]
+     (fresh [g o2 ex2]
+       (enables f g)
+       (!= g nil)
+       (conso g expanded ex2)
+       (conso g rest o2)
+       (expanded-tags o2 ex2))))
+     
 
-(defn- import-config
-  ""
-  [cfg]
-  cfg)
+;; - most specific matching ns
+;; - most specific matching level tag
+;; - all matches other tags
+;; - fname can be empty
 
-(defn set-config!
-  "Set configuration state; all at once or one at a time"
-  ([cfg]
-     (clear-config-cache!)
-     (reset! config (import-config cfg))
-     true)
-  ([ns tags policy]
-     (clear-config-cache!)
-     (swap! config assoc-in [ns (as-tags tags)] policy)
-     true))
+;; Logic utilities
+(defn intersecto [l1 l2 elt]
+  (membero elt l1)
+  (membero elt l2))
 
-(defn remove-config!
-  ([ns tags]
-     (swap! config update-in [ns] dissoc (as-tags tags))))
+(defn matching-tag [ptags rtags]
+  (fresh [tag etags]
+    (expanded-tags rtags etags)
+    (intersecto ptags etags tag)))
 
-;; Match probe to configuration
-;; -----------------------------------
-
-(def log-hierarchy
-  {:error nil
-   :warn #{:error}
-   :info #{:warn :error}
-   :debug #{:info :warn :error}
-   :trace #{:debug :info :warn :error}
-   :exit-fn #{:fn}
-   :except-fn #{:fn}
-   :enter-fn #{:fn}})
-
-(defn- expand-tags 
-  "Implement traditional log hierarchy for backwards compatability"
-  [tags]
-  (apply set/union tags (map log-hierarchy tags)))
-
-(defn- match-tags
-  "Do the probe tags match these policy mtags?"
-  [tags [mtags policy]]
-  {:pre [(every? keyword? tags) (every? keyword? mtags)]}
-  (when (not (empty? (set/intersection mtags (expand-tags tags))))
-    policy))
-
-(defn- matching-policy
-  "Do any of the tagsets in matches"
-  [matches tags]
-  (second (first (filter (partial match-tags tags) matches))))
+;; Active rules are those that equal or subsume
+;; one of the probe tags.  Matching tags are the
+;; most dominate rule tag.
 
 (defn- parent-ns
   "Return the next level of the namespace hierarchy"
   [ns]
   {:pre [(symbol? ns)]}
   (let [path (str/split (name ns) #"\.")]
-    (if (> (count path) 1)      (symbol (str/join "." (take (- (count path) 1) path)))
-      nil)))
+    (if (> (count path) 1) 
+     (symbol (str/join "." (take (- (count path) 1) path)))
+     nil)))
 
-(defn active-policy 
-  "Given a namespace and tags for a probe point, find most specific
-   matching ns with tag entries that match the probe tags, otherwise
-   search up.  Multiple tag entries at the same level that both match
-   tags will be selected arbitrarily."
-  ;; Return policy if current level matches probe level
-  ([^:clojure.lang.Symbol ns ^:clojure.lang.Set tags]
-     (active-policy ns ns tags))
-  ([ns orig tags]
-     (if-let [policy (cached-config ns tags)]
-       policy
-       (if-let [policy (matching-policy (@config ns) tags)]
-         (set-config-cache! orig tags policy)
-         (if-let [parent (parent-ns ns)]
-           (active-policy parent ns tags)
-           (set-config-cache! orig tags [:default]))))))
-     
+(defn parent-scope 
+  [scope parent]
+  (project [scope]
+    (== parent (parent-ns scope))))
+  
+(defne specific-scope [pscope rscopes]
+  ([_ [ps . tail]])
+  ([ps [head . tail]] 
+     (specific-scope ps tail))
+  ([ps ()]
+     (fresh [parent] 
+            (parent-scope ps parent)
+            (specific-scope parent rscopes))))
+
+(defn active-probe-policies 
+  "Return the policies that are valid/active for the
+   current probe point according to the current rule 
+   set"
+  [pscope ptags]
+  (distinct
+   (run* [policy]
+      (fresh [rscopes rtags]
+        (probe-rule rscopes rtags policy)
+        (matching-tag ptags rtags)
+        (firsto (specific-scope pscope rscopes))))))
+
+;; Update ruleset
+
+(defn assert-rule [rule]
+  (let [[scopes tags _ policy] rule]
+    (fact probe-rule scopes tags policy)))
+
+(defn retract-rules [constraints]
+  )
+
+(defn all-rules []
+  (run* [rule]
+    (fresh [s t p]
+      (probe-rule s t p)
+      (== rule [s t p]))))
+
+(defn print-rules []
+  (/ 1 0)
+  (clojure.pprint/pprint 
+   (all-rules)))
+
+;; Memoize logic operations w/ LRU policy
+
+(declare active-policy)
 
 
 ;; Policy execution

@@ -1,4 +1,4 @@
-(ns clj-probe.wrap)
+(ns probe.wrap)
 
 ;;
 ;; Simple Var function wrapper

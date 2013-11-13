@@ -18,9 +18,13 @@ various purposes such as profiling, value analysis,
 
 ## Concepts
 
-* Probe - a lexical statement that captures live program state
-* Probe layer - an agent that applies policies to probe state
-* Policy - A singleton or seq of fns, fn symbols, and/or keywords naming 
+* Probe - Any mechanism that extracts dynamic state during program execution;
+  a probe typically returns lexical, dynamic, and host information as well 
+  as user-provided data.  Probes can include function entry/exit/exceptions 
+  as well.  Easy to extend, for example, to add a watcher probe on an agent 
+  or atom, etc.
+* State - The map returned by a probe
+* Policy - A name for one or more operations to transform probe state.  A singleton or seq of fns, fn symbols, and/or keywords naming 
   a policy.  Policy seqs operate much like ring middleware, but are easier to 
   modify at runtime to capture / ignore various subsets of state.
 * Catalog - Global map storing named policies
@@ -43,47 +47,41 @@ Reserved tags
 
 ## Documentation by Example
 
-Let's create some probe points using a simple policy to print the values
-
     (use '[probe.core :as p])
 	(use '[probe.sink :as sink])
+	(use '[probe.policy :as policy])
 
-Set a simple policy to remove some default fields and print the raw state
+Define a simple policy to print the raw state in a log-like format
 
-	(p/set-policy! :console '[sink/console-raw])
+	(p/set-policy! :console '[sink/console-log])
 
-For probes with :debug or :trace tags, handle them with the :console policy
+For probe points with :debug tags or above, handle them with the :console policy
 
-    (p/set-config! 'user #{:debug} :console)
+    (p/set-config! 'user :debug :console)
     
     (p/probe #{:warn} :value 10)
-	=>
-	nil
+	=> nil
 
     (p/probe #{:debug} :value 10)
     2013-05-10T22:59.212 user:1 {:thread-id 80 :value 10}
-	=>
-	nil
+	=> nil
 
 But we don't want the thread id, so let's clean up our default console pipeline
 
-    (p/set-policy! :console '[(dissoc :thread-id) sink/console-raw])
+    (p/set-policy! :console '[(dissoc :thread-id) sink/console-log])
 
     (p/probe #{:debug} :value 10)
-    2013-05-10T22:59.212 user:1 {:thread-id 80 :value 10}
-	=>
-	nil
+    2013-05-10T22:59.212 user:1 {:value 10}
+	=> nil
 
 What does our global configuration look like now?
 
     (clojure.pprint/pprint @p/policies)
-	=>
-    {:console [(dissoc :thread-id) sink/console-log]
-     :default [#<core$identity clojure.core$identity@789df8c>]}
+	=> {:console [(dissoc :thread-id) sink/console-log]
+        :default [#<core$identity clojure.core$identity@789df8c>]}
 
     (clojure.pprint/pprint @p/config)
-    =>
-    {user {#{:debug} :console}}
+    => {user {#{:debug} :console}}
 
 So we can create probe points anywhere in our code, and do anything we want
 with the combination of lexical and dynamic context.  Of course good functional
@@ -112,7 +110,7 @@ programs already have wonderful probe points available, they're called functions
 	=> 3 ;; Wrapping survives redefinition
 
 	(p/remove-config! 'user :fn)
-    (p/set-config! 'user #{:exit-fn :except-fn} 
+    (p/set-config! 'user :exit-fn
        '[(select-keys [:fname :return :args]) sink/console-raw])
 
     (testprobe 1 2)
@@ -125,7 +123,7 @@ the result.  What if we want to capture these vectors into memory for
 replay later?
 
     (def my-tests (atom nil))
-    (p/set-config! 'user #{:exit-fn :except-fn}
+    (p/set-config! 'user :exit-fn
 	   '[(select-keys [:fname :return :args]) (sink/memory my-tests)])
     
     (testprobe 1 4) 
@@ -135,7 +133,53 @@ replay later?
     @my-tests
     ({:args (1 5), :return 7, :fname testprobe} {:args (1 4), :return 6, :fname testprobe})
 
+Of course the flood of vectors could get overwhelming in a real system, even if you just turn on this ability for a short while.  We can capture a random sub-sample of the traced data:
+
+    (p/set-config! 'user :exit-fn
+	   '[(policy/random-sample 0.01)
+         (select-keys [:fname :return :args]) 
+         (sink/memory my-tests)])
+
+We can used a fixed length in-memory queue to keep the last N items
+
+    (def my-tests (sink/make-memory))
+    (p/set-config! 'user :exit-fn
+	   '[(policy/random-sample 0.01)
+         (select-keys [:fname :return :args]) 
+         (sink/fixed-memory my-tests 5)])
+
+    (dotimes [i 10]
+      (testprobe i 10))
+
+    (clojure.pprint/pprint (seq @my-tests))
+    => ({:args (5 10), :return 16, :fname testprobe} 
+        {:args (7 10), :return 17, :fname testprobe} 
+        {:args (8 10), :return 18, :fname testprobe} 
+        {:args (9 10), :return 19, :fname testprobe} 
+        {:args (10 10), :return 20, :fname testprobe})
+
+We can also select for specific functions in the namespace:
+        
+    (p/set-config! 'user :exit-fn
+	   '[(policy/select-fn testprobe)
+         (select-keys [:fname :return :args]) 
+         (sink/memory my-tests)])
     
+Or only collect data when there are failures:
+
+    (p/remove-config! 'user :exit-fn)
+    (p/set-config! 'user :except-fn
+	   '[(select-keys [:ts :fname :return :args])
+         sink/console-raw])
+
+    (reset! my-tests (sink/make-memory))
+
+    (defn testprobe [a b] (if (= a 2) (throw (Exception. "oops")) (+ a b 1)))
+    (testprobe 1 3)
+    => 5
+	(testprobe 2 3)
+    {:args (2 3), :fname testprobe}
+    ; Evaluation aborted.
 
 ## Discussion
 
