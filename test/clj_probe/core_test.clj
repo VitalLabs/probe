@@ -1,6 +1,6 @@
-(ns clj-probe.core-test
+(ns probe.core-test
   (:use clojure.test
-        clj-probe.core))
+        probe.core))
 
 (deftest a-test
   (testing "FIXME, I fail."
