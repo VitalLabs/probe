@@ -22,11 +22,13 @@
        (when (~enabled-method' ~logger')
          ~(if exception'
             `(p/probe [~level]
+                      :level ~level
                        :exception
                        ~(with-meta exception'
                           {:tag 'java.lang.Throwable})
                        ~@keyvals')
             `(p/probe [~level]
+                      :level ~level
                        ~@keyvals'))))))
 
 (defmacro trace [& keyvals] (log-expr &form :trace keyvals))
