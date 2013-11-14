@@ -1,4 +1,5 @@
-(ns probe.policy)
+(ns probe.policy
+  "A collection of policy functions you may find useful")
 
 (defn random-sample [state freq]
   {:pre [(float? freq)]}
@@ -26,5 +27,5 @@
 (defn remove-args [state key & ks]
   (dissoc state :args))
 
-  
+
   

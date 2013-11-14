@@ -1,18 +1,7 @@
 (ns probe.core
-  (:refer-clojure :exclude [==])
-  (:use [clojure.core.logic])
-  (:require [clj-probe.wrap :as w]
-            [clojure.string :as str]
-            [clojure.set :as set]
-            [clojure.core.memoize :as memo]))
-
-(defn- as-sequence [value]
-  (if (sequential? value) value
-      [value]))
-
-(defn- as-tags [tags]
-  (if (set? tags) tags
-      (set (as-sequence tags))))
+  (:refer-clojure :exclude (==))
+  (:require [probe.wrap :as w]
+            [probe.config :as cfg]))
 
 ;; Policies
 ;; -----------------------
@@ -40,135 +29,19 @@
 ;; Probe Configuration
 ;; ------------------------
 
-;; Add new rules to generate policies
-;; lhs: tags + ns + fname 
-;; rhs: policy (:debug 
+(defn set-config! [ns tags policy]
+  {:pre [(sequential? tags)]}
+  (cfg/set-config! ns tags policy))
 
-(defrel probe-rule ^:index scopes ^:index tags policy)
+(defn clear-config! [ns tags]
+  {:pre [(sequential? tags)]}
+  (cfg/remove-config! ns tags))
 
-(comment
-  (map (partial apply probe-rule)
-       [[ [ experiment ]
-               [ :warn ]
-               :log ]
-        [ [ experiment.infra ]
-          [ :debug ]
-          :log ]
-        [ [ experiment.infra.models 
-           experiment.infra.client ]
-          [ :info ]
-          :record ]]))
-
-;; For tags that encompass other tags
-;; e.g. :warn enables :error
-(defrel enables child parent)
-
-;; Log level rules
-(facts enables
-  [[:warn :error]
-   [:info :warn]
-   [:debug :info]
-   [:trace :debug]])
-
-(defne expanded-tags [original expanded]
-  ([() ex] (== ex ()))
-  ([[f . rest] expanded]
-     (fresh [g ex2]
-       (enables f g)
-       (conso f expanded ex2)
-       (expanded-tags rest ex2)))
-  ([[f . rest] ex]
-     (fresh [g o2 ex2]
-       (enables f g)
-       (!= g nil)
-       (conso g expanded ex2)
-       (conso g rest o2)
-       (expanded-tags o2 ex2))))
-     
-
-;; - most specific matching ns
-;; - most specific matching level tag
-;; - all matches other tags
-;; - fname can be empty
-
-;; Logic utilities
-(defn intersecto [l1 l2 elt]
-  (membero elt l1)
-  (membero elt l2))
-
-(defn matching-tag [ptags rtags]
-  (fresh [tag etags]
-    (expanded-tags rtags etags)
-    (intersecto ptags etags tag)))
-
-;; Active rules are those that equal or subsume
-;; one of the probe tags.  Matching tags are the
-;; most dominate rule tag.
-
-(defn- parent-ns
-  "Return the next level of the namespace hierarchy"
-  [ns]
-  {:pre [(symbol? ns)]}
-  (let [path (str/split (name ns) #"\.")]
-    (if (> (count path) 1) 
-     (symbol (str/join "." (take (- (count path) 1) path)))
-     nil)))
-
-(defn parent-scope 
-  [scope parent]
-  (project [scope]
-    (== parent (parent-ns scope))))
-  
-(defne specific-scope [pscope rscopes]
-  ([_ [ps . tail]])
-  ([ps [head . tail]] 
-     (specific-scope ps tail))
-  ([ps ()]
-     (fresh [parent] 
-            (parent-scope ps parent)
-            (specific-scope parent rscopes))))
-
-(defn active-probe-policies 
-  "Return the policies that are valid/active for the
-   current probe point according to the current rule 
-   set"
-  [pscope ptags]
-  (distinct
-   (run* [policy]
-      (fresh [rscopes rtags]
-        (probe-rule rscopes rtags policy)
-        (matching-tag ptags rtags)
-        (firsto (specific-scope pscope rscopes))))))
-
-;; Update ruleset
-
-(defn assert-rule [rule]
-  (let [[scopes tags _ policy] rule]
-    (fact probe-rule scopes tags policy)))
-
-(defn retract-rules [constraints]
-  )
-
-(defn all-rules []
-  (run* [rule]
-    (fresh [s t p]
-      (probe-rule s t p)
-      (== rule [s t p]))))
-
-(defn print-rules []
-  (/ 1 0)
-  (clojure.pprint/pprint 
-   (all-rules)))
-
-;; Memoize logic operations w/ LRU policy
-
-(declare active-policy)
-
+(defn active-policy [ns tags]
+  (or (cfg/active-policy ns tags) :default))
 
 ;; Policy execution
 ;; --------------------------
-
-(declare apply-policy)
 
 (defn- policy-step [state step]
   (when-not (nil? state)
@@ -190,7 +63,7 @@
 (defn apply-policy [agent policy state]
   (when (:active agent)
     (try
-      (doall (reduce policy-step state (as-sequence policy)))
+      (doall (reduce policy-step state (cfg/as-sequence policy)))
       (catch java.lang.Throwable e
         (println "Apply policy error for policy: " policy)
         (println state)
@@ -208,20 +81,62 @@
   ([ns tags state]
      (when-let [policy (active-policy ns (set tags))]
        (let [state (assoc state
-                     :ns ns
+                     :ns (ns-name ns)
                      :tags tags
                      :thread-id  (.getId (Thread/currentThread))
-                     :ts (System/currentTimeMillis))]
+                     :date (java.util.Date.))]
          (send-off probe-agent apply-policy policy state)
          nil)))
   ([tags state]
-     (probe* (.name *ns*) tags state)))
+     (probe* (ns-name *ns*) tags state)))
 
-(defmacro probe [tags & keyvals]
-  `(probe* ~(as-tags tags)
-             (assoc ~(apply array-map keyvals)
-               :line ~(:line (meta &form)))))
+(defmacro probe
+  "Take a single map as first keyvals element, or an upacked
+   list of key and value pairs."
+  [tags & keyvals]
+  (assert (sequential? tags))
+  `(probe* (quote ~(ns-name *ns*))
+           ~(cfg/as-tags tags)
+           (assoc ~(if (= (count keyvals) 1)
+                     (first keyvals)
+                     (apply array-map keyvals))
+             :line ~(:line (meta &form)))))
 
+;;
+;; State probes
+;; -----------------------------------------
+
+(defn- state-watcher [transform-fn]
+  {:pre [(fn? transform-fn)]}
+  (fn [_ _ _ new]
+    (probe* [:state] (transform-fn new))))
+
+(defn- state? [ref]
+  (let [type (type ref)]
+    (or (= clojure.lang.Var type)    
+        (= clojure.lang.Ref type)
+        (= clojure.lang.Atom type)
+        (= clojure.lang.Agent type))))
+
+(defn probe-state!
+  "Add a probe function to a state element or a symbol
+   that resolves to a reference."
+  [transform-fn ref]
+  {:pre [(fn? transform-fn) (state? ref)]}
+  (add-watch
+   (if (symbol? ref)
+     (if-let [actual-ref (var-get (resolve ref))]
+       actual-ref
+       (throw (ex-info "Symbol is not " {:symbol ref})))
+     ref)
+   ::probe (state-watcher transform-fn)))
+
+(defn unprobe-state!
+  "Remove the probe function from the provided reference"
+  [ref]
+  (remove-watch ref ::probe))
+
+    
 ;;
 ;; Function probes
 ;; -----------------------------------------

@@ -1,4 +1,5 @@
 (ns probe.sink
+  "A set of default sinks"
   (require [clojure.string :as str]))
 
 (defn- state->string [state]
@@ -9,7 +10,7 @@
   (or (first (filter tags [:trace :debug :info :warn :error]))
       :trace))
 
-(def log-df
+(def ^:private log-df
   (doto (java.text.SimpleDateFormat. "yyyy-MM-dd'T'HH:mm.SSS")
     (.setTimeZone (java.util.TimeZone/getTimeZone "UTC"))))
 
@@ -72,9 +73,9 @@
        (swap! atom conj state)
        state)))
 
-(defn fixed-memory
+(defn memory-queue
   ([state max]
-     (fixed-memory state global max))
+     (memory-queue state global max))
   ([state ref max]
      (let [atom (if (= (class ref) clojure.lang.Atom)
                   ref (var-get (resolve ref)))]

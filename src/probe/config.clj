@@ -1,5 +1,18 @@
+(ns probe.config
+  (:require [clojure.set :as set]
+            [clojure.string :as str]))
+
 ;; Current probe configuration
 ;; {ns {tags1 policy2 tags2 policy2 ...}}
+
+(defn as-sequence [value]
+  (if (sequential? value) value
+      [value]))
+
+(defn as-tags [tags]
+  (if (set? tags) tags
+      (set (as-sequence tags))))
+
 
 (defonce config (atom {}))
 (def config-cache (atom {}))
@@ -104,7 +117,7 @@
      (if-let [policy (cached-config ns tags)]
        policy
        (if-let [policy (matching-policy (@config ns) tags)]
-         (throw (Exception. "oops")) ;;(set-config-cache! orig tags policy)
+         (set-config-cache! orig tags policy)
          (if-let [parent (parent-ns ns)]
            (active-policy parent ns tags)
            (set-config-cache! orig tags [:default]))))))

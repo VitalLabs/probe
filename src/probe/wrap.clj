@@ -1,4 +1,11 @@
-(ns probe.wrap)
+(ns probe.wrap
+  "Utility library for instrumenting vars by wrapping them")
+
+;;
+;; Watchers
+;; ----------------------------------
+
+(defn- state-change-policy [tags
 
 ;;
 ;; Simple Var function wrapper
