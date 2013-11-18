@@ -2,34 +2,42 @@
   "Support a standard logging API, using the underlying
    Logger state to enable/disable log statements but routing
    the raw data to an internal probe."
-  (:require [probe.core :as p])
+  (:require [clojure.set :as set]
+            [probe.core :as p]
+            [probe.fabric :as fab])
   (:import [java.util.logging LogManager Logger Level]
            [org.slf4j LoggerFactory]))
   
+;; Tags
+
+(def log-tag-seq
+  [:error :warn :info :debug :trace])
+
+(defn expand-tags [tags]
+  (let [logs (set/intersection (set log-tag-seq) (set tags))]
+    (loop [logtags log-tag-seq]
+      (if (logs (first logtags))
+        (concat (rest logtags) tags)
+        (recur (rest logtags))))))
+
+;; Log entry point
 
 (defn- log-expr [form level keyvals]
   ;; Pull out :exception, otherwise preserve order
-  (let [exception' (:exception (apply array-map keyvals))
-        keyvals' (mapcat identity (remove #(= :exception (first %))
-                                          (partition 2 keyvals)))
-        logger' (gensym "logger")  ; for nested syntax-quote
-        string' (gensym "string")
-        enabled-method' (symbol (str ".is"
-                                     (clojure.string/capitalize (name level))
-                                     "Enabled"))
-        log-method' (symbol (str "." (name level)))]
-    `(let [~logger' (LoggerFactory/getLogger ~(name (ns-name *ns*)))]
-       (when (~enabled-method' ~logger')
-         ~(if exception'
-            `(p/probe [~level]
-                      :level ~level
-                       :exception
-                       ~(with-meta exception'
-                          {:tag 'java.lang.Throwable})
-                       ~@keyvals')
-            `(p/probe [~level]
-                      :level ~level
-                       ~@keyvals'))))))
+  {:pre [(keyword? level)]}
+  (let [amap (apply array-map keyvals)
+        exception' (:exception amap)
+        tags' (set (concat (expand-tags [level]) (:tags amap)))
+        keyvals' (mapcat identity (remove #(#{:exception :tags} (first %))
+                                          (partition 2 keyvals)))]
+    `(when (fab/subscribers? ~tags')
+       ~(if exception'
+          `(p/probe ~tags'
+                    :exception ~(with-meta exception'
+                                  {:tag 'java.lang.Throwable})
+                    ~@keyvals')
+          `(p/probe ~tags'
+                    ~@keyvals')))))
 
 (defmacro trace [& keyvals] (log-expr &form :trace keyvals))
 

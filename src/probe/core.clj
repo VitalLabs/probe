@@ -1,92 +1,40 @@
 (ns probe.core
-  (:refer-clojure :exclude (==))
-  (:require [probe.wrap :as w]
-            [probe.config :as cfg]))
+  (:require [clojure.core.async :refer [>! <! <!! >!! go go-loop] :as async]
+            [clojure.set :as set]
+            [clojure.string :as str]
+            [probe.wrap :as w]
+            [probe.fabric :as fab]))
 
-;; Policies
-;; -----------------------
+;; Tag Management
+;; -----------------------------------------
 
-;; Hierarchical catalog of named policies
-;; {:name [fn-fnsym-or-name fn-fnsym-or-name [:split ...]]}
-
-(defonce policies (atom {:default [identity]}))
-
-(defn set-policy!
-  "Add a named policy pipeline to the policy catalog"
-  [name policy]
-  (swap! policies assoc name policy))
-
-(defn clear-policy!
-  "Remove a policy from the catalog"
-  [name]
-  (swap! policies dissoc name))
-             
-(defn lookup-policy
-  [name]
-  (get @policies name))
-
-
-;; Probe Configuration
-;; ------------------------
-
-(defn set-config! [ns tags policy]
-  {:pre [(sequential? tags)]}
-  (cfg/set-config! ns tags policy))
-
-(defn clear-config! [ns tags]
-  {:pre [(sequential? tags)]}
-  (cfg/remove-config! ns tags))
-
-(defn active-policy [ns tags]
-  (or (cfg/active-policy ns tags) :default))
-
-;; Policy execution
-;; --------------------------
-
-(defn- policy-step [state step]
-  (when-not (nil? state)
-    (cond
-     (sequential? step) (apply (resolve (first step)) state (rest step))
-     (keyword? step)    (reduce policy-step state (lookup-policy step))
-     (symbol? step)     ((resolve step) state)
-     (fn? step)         (step state))))
-
-(comment
-  (defn- policy-handler
-    "TODO: Convert pipeline to middleware handler?"
-    [policy]
-    (fn [state]
-      (if (empty? policy)
-        state
-        (policy-step state (first policy) (policy-handler (rest policy)))))))
-
-(defn apply-policy [agent policy state]
-  (when (:active agent)
-    (try
-      (doall (reduce policy-step state (cfg/as-sequence policy)))
-      (catch java.lang.Throwable e
-        (println "Apply policy error for policy: " policy)
-        (println state)
-        (println e))))
-  agent)
+(defn expand-namespace
+  "probe.foo.bar => [:ns/probe :ns/probe.foo :ns/probe.foo.bar"
+  [ns]
+  {:pre [(string? (name ns))]}
+  (->> (str/split (name ns) #"\.")
+       (reduce (fn [paths name]
+                 (if (empty? paths)
+                   (list name)
+                   (cons (str (first paths) "." name) paths)))
+               nil)
+       (map (fn [path] (keyword "ns" path)))))
 
 ;;
 ;; Direct probes
 ;; -----------------------------------------
 
-(def probe-agent (agent {:active true}))
-  
 (defn probe*
   "Probe the provided state in the current namespace using tags for dispatch"
   ([ns tags state]
-     (when-let [policy (active-policy ns (set tags))]
-       (let [state (assoc state
-                     :ns (ns-name ns)
-                     :tags tags
-                     :thread-id  (.getId (Thread/currentThread))
-                     :date (java.util.Date.))]
-         (send-off probe-agent apply-policy policy state)
-         nil)))
+     (let [ntags (expand-namespace ns)
+           etags (expand-tags tags)
+           state (assoc state
+                   :tags (concat etags ntags)
+                   :ns (ns-name ns)
+                   :thread-id  (.getId (Thread/currentThread))
+                   :ts (java.util.Date.))]
+       (fab/write-probe state)))
   ([tags state]
      (probe* (ns-name *ns*) tags state)))
 
@@ -94,9 +42,9 @@
   "Take a single map as first keyvals element, or an upacked
    list of key and value pairs."
   [tags & keyvals]
-  (assert (sequential? tags))
+  {:pre [(every? keyword? tags)]}
   `(probe* (quote ~(ns-name *ns*))
-           ~(cfg/as-tags tags)
+           ~tags
            (assoc ~(if (= (count keyvals) 1)
                      (first keyvals)
                      (apply array-map keyvals))
@@ -106,10 +54,11 @@
 ;; State probes
 ;; -----------------------------------------
 
-(defn- state-watcher [transform-fn]
+(defn- state-watcher [tags transform-fn]
   {:pre [(fn? transform-fn)]}
-  (fn [_ _ _ new]
-    (probe* [:state] (transform-fn new))))
+  (let [thetags (set (cons :probe/watch tags))]
+    (fn [_ _ _ new]
+      (probe* thetags (transform-fn new)))))
 
 (defn- state? [ref]
   (let [type (type ref)]
@@ -121,7 +70,7 @@
 (defn probe-state!
   "Add a probe function to a state element or a symbol
    that resolves to a reference."
-  [transform-fn ref]
+  [tags transform-fn ref]
   {:pre [(fn? transform-fn) (state? ref)]}
   (add-watch
    (if (symbol? ref)
@@ -129,7 +78,7 @@
        actual-ref
        (throw (ex-info "Symbol is not " {:symbol ref})))
      ref)
-   ::probe (state-watcher transform-fn)))
+   ::probe (state-watcher tags transform-fn)))
 
 (defn unprobe-state!
   "Remove the probe function from the provided reference"
@@ -144,31 +93,49 @@
 (defn- probe-fn-wrapper
   "Wrap f of var v to insert pre,post, and exception wrapping probes that
    match tags :entry-fn, :exit-fn, and :except-fn."
-  [v f]
+  [tags v f]
   (let [m (meta v)
         static (array-map :line (:line m) :fname (:name m))
-        except-fn #{:except-fn}
-        enter-tags #{:enter-fn}
-        exit-tags #{:exit-fn}]
+        except-fn (set (cons :probe/fn-except tags))
+        enter-tags (set (cons :probe/fn-enter tags))
+        exit-tags (set (cons :probe/fn-exit tags))]
     (fn [& args]
-      (do (probe* enter-tags (assoc static :fn :enter :args args))
+      (do (probe* enter-tags (assoc static
+                               :fn :enter
+                               :args args))
           (let [result (try (apply f args)
                             (catch java.lang.Throwable e
-                              (probe* except-fn (assoc static :fn :except :exception e :args args))
+                              (probe* except-fn (assoc static
+                                                  :fn :except
+                                                  :exception e
+                                                  :args args))
                               (throw e)))]
-            (probe* exit-tags (assoc static :fn :exit :args args :return result))
+            (probe* exit-tags (assoc static
+                                :fn :exit
+                                :args args
+                                :return result))
             result)))))
 
 ;; Function probe API
-(defn probe-fn! [fsym]
-  {:pre [(symbol? fsym)]}
-  (w/wrap-var-fn fsym probe-fn-wrapper))
+;; --------------------------------------------
 
-(defn unprobe-fn! [fsym]
-  {:pre [(symbol? fsym)]}
-  (w/unwrap-var-fn fsym))
+(defn probe-fn!
+  ([tags fsym]
+     {:pre [(symbol? fsym)]}
+     (w/wrap-var-fn fsym (partial probe-fn-wrapper tags)))
+  ([fsym]
+     (probe-fn! [] fsym)))
+
+(defn unprobe-fn!
+  ([tags fsym]
+     {:pre [(symbol? fsym)]}
+     (w/unwrap-var-fn fsym))
+  ([fsym]
+     (unprobe-fn! [] fsym)))
 
 ;; Namespace probe API
+;; --------------------------------------------
+
 (defn- probe-var-fns
   "Probe all function carrying vars"
   [vars]
