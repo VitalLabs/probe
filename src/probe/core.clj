@@ -127,12 +127,15 @@
   (filter #(= (:sink %) name) (vals @subscription-table)))
 
 (defn unsubscribe
-  ([selector sink]
-     (let [{:keys [channel sink]} (get-subscription selector sink)
-           {:keys [mix]}          (get-sink sink)]
+  ([selector sink-name]
+     (let [{:keys [channel] :as sub} (get-subscription selector sink-name)
+           {:keys [mix] :as sink}    (get-sink sink-name)]
+       (when-not (and sub sink)
+         (throw (ex-info "Selector-sink pair not found"
+                         {:selector selector :sub sub :sink sink})))
        (async/unmix mix channel)
        (async/close! channel)
-       (swap! subscription-table dissoc [selector sink]))))
+       (swap! subscription-table dissoc [selector sink-name]))))
 
 (defn unsubscribe-all []
   (doall
