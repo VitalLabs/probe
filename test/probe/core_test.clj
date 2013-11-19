@@ -42,15 +42,19 @@
   (fact "can be created" (get-subscription #{:test} :history1) => #(= (:sink %) :history1))
   (fact "can be retrieved" (:selector (get-subscription #{:test} :history1)) => #{:test})
   (fact "can be retrived by sink" (sink-subscriptions :history1) => #(= (count %) 1))
-  (fact "ok to retrieve the empty set" (sink-subscriptions :fubar) => empty?))
+  (fact "ok to retrieve the empty set" (sink-subscriptions :fubar) => empty?)
+  (unsubscribe #{:test} :history1)
+  (fact "memoized lookup reset on unsubscribe"
+        (get-subscription #{:test} :history1) => nil?))
+
 
 (facts "routing"
   (unsubscribe-all)
   (rem-sink :history1)
   (reset! history1 nil)
   (add-sink :history1 history-sink1)
-;;  (add-sink :printer println)
   (subscribe #{:test} :history1 (incrementing-channel :count))
+;;  (add-sink :printer println)
 ;;  (subscribe #{:test} (incrementing-channel :count) :printer)
   (write-state {:tags #{:test} :foo :bar})
   (facts "sends state to sink" (first @history1) => {:tags #{:test} :foo :bar})
@@ -63,7 +67,18 @@
   (facts "extra state is ok" (first @history1) => {:tags #{:test} :count 2 :foo :bar})
   (write-state {:tags #{:test} :count 1 :foo {:test 1 :testing 2}})
   (facts "nested structures are ok"
-    (first @history1) => {:tags #{:test} :count 2 :foo {:test 1 :testing 2}})
+         (first @history1) => {:tags #{:test} :count 2 :foo {:test 1 :testing 2}})
+  (add-sink :history1 history-sink1 true)
+  (write-state {:tags #{:test} :count 1})
+  (facts "updating sinks re-establish existing subscriptions"
+         (first @history1) => {:tags #{:test} :count 2})
+  (reset! history1 nil)
+  (subscribe #{:test} :history1)
+  (write-state {:tags #{:test} :count 1})
+  (facts "updating subscriptions re-establish connection"
+         (first @history1) => {:tags #{:test} :count 1})
+  (facts "no extra messages are sent"
+          (count @history1) => 1)
   (unsubscribe-all))
 
 (defn match-state [& {:as match}]
@@ -102,5 +117,5 @@
       (sink/last-value mem)
       => (match-state :form '(do (+ 1 2)) :value 3))))
       
-                    
+
        

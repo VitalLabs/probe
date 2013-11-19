@@ -6,6 +6,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [clojure.tools.logging :as clog]
+            [clojure.core.memoize :as memo]
             [clojure.core.async :refer [chan >! <! <!! >!! go go-loop] :as async]
             [probe.wrap :as wrap]
             [probe.sink :as sink]))
@@ -48,7 +49,7 @@
 (defn get-sink [name]
   (@sinks name))
 
-(declare unsubscribe sink-subscriptions)
+(declare unsubscribe sink-subscriptions link-to-sink unlink-from-sink)
 
 (defn rem-sink
   "Remove a sink and all subscriptions"
@@ -71,7 +72,8 @@
      (let [prior (get-sink name)]
        (when prior
          (if force?
-           (rem-sink name false)
+           (map (fn [sub] (unlink-from-sink sub))
+                (sink-subscriptions name))
            (throw (ex-info "Sink already configured; remove or force add" {:sink name})))))
      (let [c (chan)
            mix (async/mix c)
@@ -82,6 +84,9 @@
                  :mix mix
                  :out out}]
        (swap! sinks assoc name sink)
+       (when force?
+         (map (fn [sub] (link-to-sink sub))
+              (sink-subscriptions name)))
        sink))
   ([name f]
      (add-sink name f false)))
@@ -96,47 +101,66 @@
 (defn subscriptions []
   (keys @subscription-table))
 
-(defn subscribe
-  ([selector sink-name channel]
-     {:pre [(set? selector) (keyword? sink-name)]}
-     (let [{:keys [mix] :as sink} (get-sink sink-name)
-           subscription {:selector (set selector)
-                         :channel channel
-                         :sink sink-name
-                         :name selector}]
-       (assert (and sink mix))
-       (async/admix mix channel)
-       (swap! subscription-table assoc [selector sink-name] subscription)
-       subscription))
-  ([selector sink-name]
-     (subscribe selector sink-name (chan))))
-
 (defn get-subscription [selector sink-name]
   {:pre [(coll? selector) (keyword? sink-name)]}
   (@subscription-table [(set selector) sink-name]))
 
-(defn subscribers [tags]
+(defn sink-subscriptions [name]
+  (filter #(= (:sink %) name) (vals @subscription-table)))
+
+(defn- subscribers*
+  "Get any subscriptions for the provided tag set.
+   This is not a terribly cheap operation so use the
+   public memoized version in subscribers below."
+  [tags]
   (let [probe-tags (set tags)]
     (filter #(set/subset? (:selector %) probe-tags)
             (vals @subscription-table))))
 
+(def subscribers (memo/memo subscribers*))
+
 (defn subscribers? [tags]
   (not (empty? (subscribers tags))))
 
-(defn sink-subscriptions [name]
-  (filter #(= (:sink %) name) (vals @subscription-table)))
+(defn- link-to-sink [subscription]
+  (let [{:keys [mix] :as sink} (get-sink (:sink subscription))]
+    (assert (and sink subscription))
+    (async/admix (:mix sink) (:channel subscription))))
+
+(defn- unlink-from-sink [subscription]
+  (let [{:keys [mix] :as sink} (get-sink (:sink subscription))]
+    (assert (and sink subscription))
+    (async/unmix (:mix sink) (:channel subscription))))
+
+(defn subscribe
+  ([selector sink-name channel]
+     {:pre [(set? selector) (keyword? sink-name)]}
+     (let [existing (get-subscription selector sink-name)
+           subscription {:selector (set selector)
+                         :channel channel
+                         :sink sink-name
+                         :name selector}]
+       (when existing
+         (unsubscribe selector sink-name))
+       (link-to-sink subscription)
+       (swap! subscription-table assoc [selector sink-name] subscription)
+       (memo/memo-clear! subscribers)
+       subscription))
+  ([selector sink-name]
+     (subscribe selector sink-name (chan))))
 
 (defn unsubscribe
   ([selector sink-name]
-     (let [{:keys [channel] :as sub} (get-subscription selector sink-name)
-           {:keys [mix] :as sink}    (get-sink sink-name)]
-       (when-not (and sub sink)
+     (let [{:keys [channel] :as sub} (get-subscription selector sink-name)]
+       (when-not sub
          (throw (ex-info "Selector-sink pair not found"
-                         {:selector selector :sub sub :sink sink})))
-       (async/unmix mix channel)
+                         {:selector selector :sink sink-name})))
+       (unlink-from-sink sub)
        (async/close! channel)
-       (swap! subscription-table dissoc [selector sink-name]))))
-
+       (swap! subscription-table dissoc [selector sink-name])
+       (memo/memo-clear! subscribers)
+       nil)))
+  
 (defn unsubscribe-all []
   (doall
    (map (fn [[sel sink]]

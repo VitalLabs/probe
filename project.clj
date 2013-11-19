@@ -6,6 +6,7 @@
                  ;; Libraries
                  [org.clojure/core.async "0.1.242.0-44b1e3-alpha"]
                  [org.clojure/tools.logging "0.2.6"]
+                 [org.clojure/core.memoize "0.5.3"]
                  ;; Logging
                  [ch.qos.logback/logback-classic "1.0.13"
                   :exclusions [org.slf4j/slf4j-api]]
