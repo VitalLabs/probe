@@ -21,10 +21,12 @@ state is predominantly immutable.
 
 This library facilitates the insertion of 'probe' points into your
 source code as well as various dynamic contexts (such as state change
-events or function invocations).  It provides facilities for
-subscribing to subsets of this state across the program, applying
-filters and other transforms to it, and routing it to any number of
-sinks.
+events or function invocations).  A probe point generates an arbitrary
+'state map' of program state as well as facilities for 'subscribing' subsets
+of state across the program.  A flexible tagging system allows you to
+link probes together across namespaces, run them through a set of
+filters or other transforms, and to any number of different 
+destination 'sinks'.
 
 The state map produced by probe points can serve as logging
 statements, but may also be used for a wide variety of additional
