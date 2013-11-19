@@ -169,6 +169,45 @@
                 (>! error-channel {:state ~state :exception t}))))))
       (recur))))
 
+;; ==================================
+;; Channel Transform Helpers
+;; ==================================
+
+(defn filter>
+  "Return a channel that applies a filter and
+   if predict is truthy, passes the value to
+   the destination channel or if one is not
+   provided, a generic channel."
+  ([f c]
+     (async/filter> f c))
+  ([f]
+     (filter> f (async/chan))))
+
+(defn map>
+  ([f c]
+     (async/map> f c))
+  ([f]
+     (map> f (async/chan))))
+
+(defn remove>
+  ([f c]
+     (async/remove> f c))
+  ([f]
+     (remove> f (async/chan))))
+
+(defn- sampler-fn [max]
+  (let [count (atom 0)]
+    (fn [_]
+      (if (> @count max)
+        (do (reset! count 0) true)
+        (do (swap! count inc) false)))))
+
+(defn sample>
+  ([freq c]
+     {:pre [(float? freq)]}
+     (map> (sampler-fn (int (/ 1 freq))) c))
+  ([freq]
+     (sample> freq (async/chan))))
 
 
 ;; =============================================
@@ -252,8 +291,8 @@
         (= clojure.lang.Agent type))))
 
 (defn probe-state!
-  "Add a probe function to a state element or a symbol
-   that resolves to a reference."
+  "Add a probe function to a state element or symbol
+   that resolves to a state location."
   [tags transform-fn ref]
   {:pre [(fn? transform-fn) (state? ref)]}
   (add-watch
@@ -280,24 +319,21 @@
   [tags v f]
   (let [m (meta v)
         static (array-map :line (:line m) :fname (:name m))
-        except-fn (set (cons :probe/fn-except tags))
-        enter-tags (set (cons :probe/fn-enter tags))
-        exit-tags (set (cons :probe/fn-exit tags))]
+        except-fn (set (concat [:probe/fn :probe/fn-except] tags))
+        enter-tags (set (concat [:probe/fn :probe/fn-enter] tags))
+        exit-tags (set (concat [:probe/fn :probe/fn-exit] tags))]
     (fn [& args]
       (do (probe* enter-tags (assoc static
-                               :fn :enter
                                :args args))
           (let [result (try (apply f args)
                             (catch java.lang.Throwable e
                               (probe* except-fn (assoc static
-                                                  :fn :except
                                                   :exception e
                                                   :args args))
                               (throw e)))]
             (probe* exit-tags (assoc static
-                                :fn :exit
                                 :args args
-                                :return result))
+                                :value result))
             result)))))
 
 ;; Function probe API
