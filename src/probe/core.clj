@@ -314,23 +314,41 @@
         (= clojure.lang.Atom type)
         (= clojure.lang.Agent type))))
 
+(defn- resolve-ref
+  "Usually we want to the value of a Var and not the var itself when
+   submitting a watcher.  Thus, we dereference the val with val-get
+   and if the result is a state? element, we use that instead of the
+   provided or referenced var"
+  [ref]
+  (cond (and (symbol? ref) (state? (var-get (resolve ref))))
+        (var-get (resolve ref))
+        (or (and (symbol? ref) (fn? (state? (resolve ref))))
+            (and (var? ref) (fn? (var-get ref))))
+        (throw (ex-info "Probing Vars that hold functions is verboten"))
+        (and (symbol? ref) (state? (resolve ref)))
+        (resolve ref)
+        (and (var? ref) (state? (var-get ref)))
+        (var-get ref)
+        (state? ref)
+        ref
+        :default
+        (throw (ex-info "Do not know how to probe provided reference"
+                        {:ref ref :type (type ref)}))))
+             
+
 (defn probe-state!
   "Add a probe function to a state element or symbol
    that resolves to a state location."
   [tags transform-fn ref]
-  {:pre [(fn? transform-fn) (state? ref)]}
-  (add-watch
-   (if (symbol? ref)
-     (if-let [actual-ref (var-get (resolve ref))]
-       actual-ref
-       (throw (ex-info "Symbol is not " {:symbol ref})))
-     ref)
-   ::probe (state-watcher tags transform-fn)))
+  {:pre [(fn? transform-fn)]}
+  (let [stateval (resolve-ref ref)]
+    (add-watch stateval ::probe (state-watcher tags transform-fn))))
 
 (defn unprobe-state!
   "Remove the probe function from the provided reference"
   [ref]
-  (remove-watch ref ::probe))
+  (let [stateval (resolve-ref ref)]
+    (remove-watch stateval ::probe)))
 
     
 ;;

@@ -16,8 +16,7 @@
                  [org.slf4j/log4j-over-slf4j "1.7.2"]
                  ;; Testing
                  [midje "1.5.0"]]
-  :plugins [[lein-midje "3.0.0"]]
-  :repl-options {:port 4005})
+  :plugins [[lein-midje "3.0.0"]])
                  
 
 

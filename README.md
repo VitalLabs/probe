@@ -155,110 +155,65 @@ We can now magically trace input arguments and return values for every
 expression.  How about just focusing on the input/outputs?  We can use
 some channel builders from the probe.core package to make this more concise.
 
-;; ================================================
-
     (defn args-and-value [state] (select-keys state [:args :value :fname]))
     (p/subscribe #{:test :probe/fn-exit} :printer (p/map> args-and-value))
 
 	(map #(testprobe 1 %) (repeat 0 10))
-  	=> 3
-
-
-This demonstrates generating test vectors from runtime for any
-function simply by probing the function and appropriately filtering
-the result.  
+  	=> (1 2 3 4 5 6 7 8 9 10)
+    {:fname testprobe :args (1 0) :value 1}
+    {:fname testprobe :args (1 1) :value 1}
+	...
 
 So far, we've just been printing stuff out.  Not much better than
-playing with logs.  What if we want to capture some vectors from deep
-inside a system for interactive replay at the repl?
+current logging solutions.  What if we want to capture these vectors,
+or a function trace from from deep inside a larger system for
+interactive replay at the repl?
 
-    (def my-tests (atom nil))
-	(sink/add-sink :accum (sink/memory-sink))
+    (def my-trace (sink/make-memory))
+	(p/add-sink :accum (sink/memory-sink my-trace))
 	(p/subscribe #{:test :probe/fn-exit} :accum (p/map> args-and-value))
 
-	(map #(testprobe 1 %) (repeat 0 10))
-    => (...)
+	(map #(testprobe 1 %) (range 0 10))
+    => (1 2 3 4 5 6 7 8 9 10)
 
     (sink/scan-memory)
-    => 
-    ({:args (1 5), :return 7, :fname testprobe} {:args (1 4), :return 6, :fname testprobe})
+    => ({:fname testprobe, :value 1 :args (1 0)} {:fname testprobe, :value 2 :args (1 1)} ...)
 
-	(unprobe-fn! 'testprobe)
+    (map :value (sink/scan-memory))
+    => (1 2 3 4 5 6 7 8 9 10)
 
-We can also watch state elements like Refs and Vars:
+    (def my-trace nil)  ;; remove state from namespace for GC
+	(unprobe-fn! 'testprobe) ;; Remove the function probe wrapper
+    (p/rem-sink :accum) ;; also removes the probe subscription for you
 
-    (def myatom {:test 1})
-    (probe-state! identity myatom)
-    (set-config! 'user :state
-      [sink/console-raw])
+We can also watch state elements like Refs and Vars by applying a transform function that generates a probe by applying the transform-fn to the new value whenever the state is changed:
+
+    (def myatom (atom {:test 1}))
+    (def myref (ref {:test 1}))
+    (probe-state! #{:test} identity #'myref)
+    (probe-state! #{:test} identity #'myatom)
+    (p/subscribe #{:test :probe/watch} :printer)
 
     (swap! myatom update-in [:test] inc)
     => {:test 2}
-    => {:ts 1384410782190, :ns user, :test 2, :thread-id 457, :tags [:state]}
+    {:ts #inst "2013-11-19T19:55:03.849-00:00", :ns probe.core, :test 2, :thread-id 97, :tags #{:test :probe/watch :ns/probe.core :ns/probe}}
 
-Of course a flood of maps could get overwhelming in a real system,
-even if you just turn on this ability for a short while.  We can
-capture a random sub-sample of the traced data:
+    (dosync
+      (commute myref update-in [:test] inc))
+    => {:test 2}
+	{:ts #inst "2013-11-19T19:58:24.961-00:00", :ns probe.core, :test 2, :thread-id 103, :tags #{:test :probe/watch :ns/probe.core :ns/probe}}
 
-    (p/set-config! 'user :exit-fn
-	   '[(policy/random-sample 0.01)
-         (select-keys [:fname :return :args]) 
-         (sink/memory my-tests)])
+Note: probing alter-var-root operations on namespace vars is still a little shaky so don't rely on this functionality yet.
 
-We can used a fixed length in-memory queue to keep the last N items
+Other features we'll document soon:
 
-    (def my-tests (sink/make-memory))
-    (p/set-config! 'user :exit-fn
-	   '[(policy/random-sample 0.01)
-         (select-keys [:fname :return :args]) 
-         (sink/fixed-memory my-tests 5)])
-
-    (dotimes [i 10]
-      (testprobe i 10))
-
-    (clojure.pprint/pprint (seq @my-tests))
-    => ({:args (5 10), :return 16, :fname testprobe} 
-        {:args (7 10), :return 17, :fname testprobe} 
-        {:args (8 10), :return 18, :fname testprobe} 
-        {:args (9 10), :return 19, :fname testprobe} 
-        {:args (10 10), :return 20, :fname testprobe})
-
-We can also select for specific functions in the namespace:
-        
-    (p/set-config! 'user :exit-fn
-	   '[(policy/select-fn testprobe)
-         (select-keys [:fname :return :args]) 
-         (sink/memory my-tests)])
-    
-Or only collect data when there are failures:
-
-    (p/remove-config! 'user :exit-fn)
-    (p/set-config! 'user :except-fn
-	   '[(select-keys [:ts :fname :return :args])
-         sink/console-raw])
-
-    (reset! my-tests (sink/make-memory))
-
-    (defn testprobe [a b] (if (= a 2) (throw (Exception. "oops")) (+ a b 1)))
-    (testprobe 1 3)
-    => 5
-	(testprobe 2 3)
-    {:args (2 3), :fname testprobe}
-    ; Evaluation aborted.
-
-Finally, what if you just want to write a log in the (almost) traditional way?
-
-    (use '[probe.logging :as log])
-    (log/error :msg "This is an error" :exception e :value 10)
-
-This uses the Pedestal convention promoted by Relevance, but captures
-the structured data before converting it to a string.  This statement
-is equivalent to:
-
-    (probe [:error] :msg "This is an error" :exception e :value 10)
-
-except that the probe statement is only called if the underlying
-logger for that namespace is active.
+- Setting / unsetting probes on all publics in a namespace, etc
+- Other memory options (like a sliding window queue)
+- Sampling transform channels
+- Using log sinks
+- Creating a database sink example
+- Capturing streams of exceptions for post-analysis
+- Low level access via write-state
 
 ## Discussion
 
@@ -266,7 +221,7 @@ I moved to core.async in 0.9.0 because it provides a sound
 infrastructure for assembling functions in topologies to operate over
 streams of events.  I've picked a simple di-graph topology to keep
 things simple for interactive use, but it would only take a little
-extra code to support more complex topologies.
+extra code to support more complex DAG-style topologies.
 
 ## Future Work
 
@@ -283,8 +238,9 @@ Here are some opportunities to improve the library.
 
 ### Future Tasks (Major)
 
-* Performance.  There are quite a few places where the performance of the probe 
-library can be improved, particularly computing matching subscriptions for a set of tags.
+* Deduplication.  It's easy to create multiple paths to the same sink; how do we
+     handle (or do we) deduplication particularly when subscription channels
+     may transform the data invalidating an = comparison?
 * Injest legacy logging messages - Most systems will have legacy libraries that
      use one of the Java logging systems.  Create some namespaces that
      allow for injecting these log messages into clj-probe middleware.  Ignore

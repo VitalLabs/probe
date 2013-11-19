@@ -31,7 +31,7 @@
       state)))
 
 (defn incrementing-channel [key]
-  (async/map> (incrementer-fn key) (chan)))
+  (map> (incrementer-fn key)))
 
 (facts "subscriptions"
   (unsubscribe-all)
@@ -50,13 +50,13 @@
 
 (facts "routing"
   (unsubscribe-all)
-  (rem-sink :history1)
   (reset! history1 nil)
-  (add-sink :history1 history-sink1)
+  (add-sink :history1 history-sink1 true)
   (subscribe #{:test} :history1 (incrementing-channel :count))
 ;;  (add-sink :printer println)
 ;;  (subscribe #{:test} (incrementing-channel :count) :printer)
   (write-state {:tags #{:test} :foo :bar})
+  (Thread/sleep 10)
   (facts "sends state to sink" (first @history1) => {:tags #{:test} :foo :bar})
   (write-state {:tags #{:test} :count 1})
   (facts "transforms are applied" (first @history1) => {:tags #{:test} :count 2})
@@ -118,4 +118,8 @@
       => (match-state :form '(do (+ 1 2)) :value 3))))
       
 
+(future-facts "probe state")
+(future-facts "probe fns")
+(future-facts "probe namespace")
+       
        
