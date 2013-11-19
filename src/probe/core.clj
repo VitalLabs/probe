@@ -1,15 +1,184 @@
 (ns probe.core
-  (:require [clojure.core.async :refer [>! <! <!! >!! go go-loop] :as async]
-            [clojure.set :as set]
+  "Treat the program's dynamic execution traces as first class system state;
+   construct a simple di-graph topology between probe points and reporting
+   sinks using core.async channel transforms and filters to manage the flow
+   of data."
+  (:require [clojure.set :as set]
             [clojure.string :as str]
-            [probe.wrap :as w]
-            [probe.fabric :as fab]))
+            [clojure.tools.logging :as clog]
+            [clojure.core.async :refer [chan >! <! <!! >!! go go-loop] :as async]
+            [probe.wrap :as wrap]
+            [probe.sink :as sink]))
+
+;; =====================================
+;;  TOPOLOGY
+;; =====================================
+
+;;
+;; ## Exception handling
+;;
+
+(defonce error-channel (chan))
+
+(defonce error-router
+  (go
+   (while true
+     (when-let [{:keys [state exception]} (<! error-channel)]
+       (clog/error "Probe error detected" state exception)
+       (recur)))))
+
+;;
+;; ## Sinks
+;;
+
+(defonce sinks (atom {}))
+
+(defn sink-processor [f c]
+  (go-loop []
+    (when-let [state (<! c)]
+      (try
+        (f state)
+        (catch java.lang.Throwable e
+          (>! error-channel {:state state :exception e})))
+      (recur))))
+
+(defn sink-names []
+  (keys sinks))
+
+(defn get-sink [name]
+  (@sinks name))
+
+(declare unsubscribe sink-subscriptions)
+
+(defn rem-sink
+  "Remove a sink and all subscriptions"
+  ([name unsub?]
+     (let [{:keys [mix out in] :as sink} (get-sink name)]
+       (when sink
+         (doall
+          (map (fn [sub] (unsubscribe (:name sub) (:sink sub)))
+               (sink-subscriptions name)))
+         (async/close! in)
+         (assert (nil? (<!! out)))
+         (swap! sinks dissoc name))))
+  ([name]
+     (rem-sink name true)))
+
+(defn add-sink
+  "Create a named sink function for probe state"
+  ([name f force?]
+     {:pre [(keyword? name)]}
+     (let [prior (get-sink name)]
+       (when prior
+         (if force?
+           (rem-sink name false)
+           (throw (ex-info "Sink already configured; remove or force add" {:sink name})))))
+     (let [c (chan)
+           mix (async/mix c)
+           out (sink-processor f c)
+           sink {:name name
+                 :function f
+                 :in c
+                 :mix mix
+                 :out out}]
+       (swap! sinks assoc name sink)
+       sink))
+  ([name f]
+     (add-sink name f false)))
+
+       
+;;
+;; ## Subscriptions
+;;
+       
+(defonce ^:private subscription-table (atom {}))
+
+(defn subscriptions []
+  (keys @subscription-table))
+
+(defn subscribe
+  ([selector sink-name channel]
+     {:pre [(set? selector) (keyword? sink-name)]}
+     (let [{:keys [mix] :as sink} (get-sink sink-name)
+           subscription {:selector (set selector)
+                         :channel channel
+                         :sink sink-name
+                         :name selector}]
+       (assert (and sink mix))
+       (async/admix mix channel)
+       (swap! subscription-table assoc [selector sink-name] subscription)
+       subscription))
+  ([selector sink-name]
+     (subscribe selector sink-name (chan))))
+
+(defn get-subscription [selector sink-name]
+  {:pre [(coll? selector) (keyword? sink-name)]}
+  (@subscription-table [(set selector) sink-name]))
+
+(defn subscribers [tags]
+  (let [probe-tags (set tags)]
+    (filter #(set/subset? (:selector %) probe-tags)
+            (vals @subscription-table))))
+
+(defn subscribers? [tags]
+  (not (empty? (subscribers tags))))
+
+(defn sink-subscriptions [name]
+  (filter #(= (:sink %) name) (vals @subscription-table)))
+
+(defn unsubscribe
+  ([selector sink]
+     (let [{:keys [channel sink]} (get-subscription selector sink)
+           {:keys [mix]}          (get-sink sink)]
+       (async/unmix mix channel)
+       (async/close! channel)
+       (swap! subscription-table dissoc [selector sink]))))
+
+(defn unsubscribe-all []
+  (doall
+   (map (fn [[sel sink]]
+          (unsubscribe sel sink))
+        (keys @subscription-table)))
+  {})
+
+;;
+;; ## Router
+;;
+               
+(defonce input (chan))
+
+(defn write-state
+  "External API to submit probe state to the fabric"
+  [state]
+  (>!! input state))
+
+(def router-handler 
+  (go-loop []
+    (let [state (<! input)]
+      (clog/trace "Routing probe state: " state)
+      (when-let [tags (and (map? state) (:tags state))]
+        (when (coll? tags)
+          (doseq [sub (subscribers tags)]
+            (try
+              (clog/trace "Writing channel for: " [(:name sub) (:sink sub)])
+              (>! (:channel sub) state)
+              (catch java.lang.Throwable t
+                (>! error-channel {:state ~state :exception t}))))))
+      (recur))))
+
+
+
+;; =============================================
+;;  PROBE POINTS
+;; =============================================
+
 
 ;; Tag Management
 ;; -----------------------------------------
 
 (defn expand-namespace
-  "probe.foo.bar => [:ns/probe :ns/probe.foo :ns/probe.foo.bar"
+  "Generate all sub-namespaces for tag filtering:
+   probe.foo.bar => [:ns/probe :ns/probe.foo :ns/probe.foo.bar]"
   [ns]
   {:pre [(string? (name ns))]}
   (->> (str/split (name ns) #"\.")
@@ -21,20 +190,19 @@
        (map (fn [path] (keyword "ns" path)))))
 
 ;;
-;; Direct probes
+;; Expression probes
 ;; -----------------------------------------
 
 (defn probe*
   "Probe the provided state in the current namespace using tags for dispatch"
   ([ns tags state]
      (let [ntags (expand-namespace ns)
-           etags (expand-tags tags)
            state (assoc state
-                   :tags (concat etags ntags)
+                   :tags (set (concat tags ntags))
                    :ns (ns-name ns)
                    :thread-id  (.getId (Thread/currentThread))
                    :ts (java.util.Date.))]
-       (fab/write-probe state)))
+       (write-state state)))
   ([tags state]
      (probe* (ns-name *ns*) tags state)))
 
@@ -49,6 +217,19 @@
                      (first keyvals)
                      (apply array-map keyvals))
              :line ~(:line (meta &form)))))
+
+(defmacro probe-expr
+  "Like logging/spy; generates a probe state with :form and return
+   :value keys and the :probe/expr tag"
+  [& body]
+  (let [[tags thebody] (if (and (set? (first body)) (> (count body) 1))
+                         [(cons :probe/expr (first body)) (rest body)]
+                         [#{:probe/expr} body])]
+    `(let [value# (do ~@thebody)]
+       (probe ~tags
+              :form '(do ~@(rest &form))
+              :value value#)
+       value#)))
 
 ;;
 ;; State probes
@@ -122,14 +303,14 @@
 (defn probe-fn!
   ([tags fsym]
      {:pre [(symbol? fsym)]}
-     (w/wrap-var-fn fsym (partial probe-fn-wrapper tags)))
+     (wrap/wrap-var-fn fsym (partial probe-fn-wrapper tags)))
   ([fsym]
      (probe-fn! [] fsym)))
 
 (defn unprobe-fn!
   ([tags fsym]
      {:pre [(symbol? fsym)]}
-     (w/unwrap-var-fn fsym))
+     (wrap/unwrap-var-fn fsym))
   ([fsym]
      (unprobe-fn! [] fsym)))
 
@@ -141,7 +322,7 @@
   [vars]
   (doall
    (->> vars
-        (filter (comp fn? var-get w/as-var))
+        (filter (comp fn? var-get wrap/as-var))
         (map probe-fn!))))
 
 (defn- unprobe-var-fns
@@ -149,7 +330,7 @@
   [vars]
   (doall
    (->> vars
-        (filter (comp fn? var-get w/as-var))
+        (filter (comp fn? var-get wrap/as-var))
         (map probe-fn!))))
 
 (defn probe-ns! [ns]

@@ -2,11 +2,8 @@
   "Support a standard logging API, using the underlying
    Logger state to enable/disable log statements but routing
    the raw data to an internal probe."
-  (:require [clojure.set :as set]
-            [probe.core :as p]
-            [probe.fabric :as fab])
-  (:import [java.util.logging LogManager Logger Level]
-           [org.slf4j LoggerFactory]))
+  (:use [probe.core])
+  (:require [clojure.set :as set]))
   
 ;; Tags
 
@@ -30,13 +27,13 @@
         tags' (set (concat (expand-tags [level]) (:tags amap)))
         keyvals' (mapcat identity (remove #(#{:exception :tags} (first %))
                                           (partition 2 keyvals)))]
-    `(when (fab/subscribers? ~tags')
+    `(when (subscribers? ~tags')
        ~(if exception'
-          `(p/probe ~tags'
+          `(probe ~tags'
                     :exception ~(with-meta exception'
                                   {:tag 'java.lang.Throwable})
                     ~@keyvals')
-          `(p/probe ~tags'
+          `(probe ~tags'
                     ~@keyvals')))))
 
 (defmacro trace [& keyvals] (log-expr &form :trace keyvals))
