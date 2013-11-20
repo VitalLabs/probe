@@ -125,18 +125,24 @@
   (reset! history1 nil)
   (add-sink :history1 history-sink1 true)
   (subscribe #{:test} :history1 (incrementing-channel :count))
+  
   (fact "are not captured by default"
     (probe #{:test} :count 1)
+    (Thread/sleep 20)
     (select-keys (first @history1) [:tags :count :bindings])
     => {:tags #{:test :ns/probe :ns/probe.core-test} :count 2})
+  
   (fact "can be captured"
     (capture-bindings! `[probe.core-test/my-bindings])
     (probe #{:test} :count 1)
+    (Thread/sleep 20)
     (select-keys (first @history1) [:tags :count :bindings])
     => {:tags #{:test :ns/probe :ns/probe.core-test} :count 2
         :bindings {'probe.core-test/my-bindings {:foo :bar}}})
+  
   (fact "capture can be inhibited"
     (without-bindings (probe #{:test} :count 1))
+    (Thread/sleep 20)
     (select-keys (first @history1) [:tags :count :bindings])
     => {:tags #{:test :ns/probe :ns/probe.core-test} :count 2})
   (capture-bindings! nil))
