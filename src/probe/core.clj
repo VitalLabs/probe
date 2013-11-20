@@ -284,7 +284,7 @@
   (->> capture-bindings
        (map (fn [sym]
               (when-let [var (resolve sym)]
-                (when-let [val (var-get val)]
+                (when-let [val (var-get var)]
                   [sym val]))))
        (into {})))
 
