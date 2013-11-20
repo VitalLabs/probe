@@ -281,11 +281,12 @@
   (alter-var-root #'capture-bindings (fn [old] list)))
 
 (defn grab-bindings []
-  (when capture-bindings
-    (into {} (map (fn [sym]
-                    (when-let [var (resolve sym)]
-                      [sym (var-get var)]))
-                  capture-bindings))))
+  (->> capture-bindings
+       (map (fn [sym]
+              (when-let [var (resolve sym)]
+                (when-let [val (var-get val)]
+                  [sym val]))))
+       (into {})))
 
 (defmacro without-bindings [& body]
   `(binding [capture-bindings nil]
@@ -300,8 +301,11 @@
                    :tags (set (concat tags ntags))
                    :ns (ns-name ns)
                    :thread-id  (.getId (Thread/currentThread))
-                   :ts (java.util.Date.))]
-       (write-state (if bindings (assoc state :bindings bindings) state))))
+                   :ts (java.util.Date.))
+           state (if (and bindings (not (empty? bindings)))
+                   (assoc state :bindings bindings)
+                   state)]
+       (write-state state)))
   ([tags state]
      (probe* (ns-name *ns*) tags state)))
 
