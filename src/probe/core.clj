@@ -259,16 +259,49 @@
 ;; Expression probes
 ;; -----------------------------------------
 
+(defonce ^:dynamic capture-bindings nil)
+
+(defn- dynamic-var? [sym]
+  (:dynamic (meta (resolve sym))))
+
+(defn- valid-bindings? [list]
+  (and (sequential? list)
+       (every? symbol? list)
+       (every? namespace list)
+       (every? dynamic-var? list)))
+
+(defn capture-bindings!
+  "Establish a global capture list for bindings to be passed on the
+   :probe.core/bindings key in the state object.  You'll need to filter
+   these in a transform if you don't want them in your sink!  Also, this
+   function expects fully qualified symbol names of the vars you wish to
+   grab bindings for."
+  [list]
+  {:pre [(or (nil? list) (valid-bindings? list))]}
+  (alter-var-root #'capture-bindings (fn [old] list)))
+
+(defn grab-bindings []
+  (when capture-bindings
+    (into {} (map (fn [sym]
+                    (when-let [var (resolve sym)]
+                      [sym (var-get var)]))
+                  capture-bindings))))
+
+(defmacro without-bindings [& body]
+  `(binding [capture-bindings nil]
+     ~@body))
+
 (defn probe*
   "Probe the provided state in the current namespace using tags for dispatch"
   ([ns tags state]
      (let [ntags (expand-namespace ns)
+           bindings (grab-bindings)
            state (assoc state
                    :tags (set (concat tags ntags))
                    :ns (ns-name ns)
                    :thread-id  (.getId (Thread/currentThread))
                    :ts (java.util.Date.))]
-       (write-state state)))
+       (write-state (if bindings (assoc state :bindings bindings) state))))
   ([tags state]
      (probe* (ns-name *ns*) tags state)))
 

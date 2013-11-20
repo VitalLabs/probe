@@ -1,0 +1,63 @@
+Of course a flood of maps could get overwhelming in a real system,
+even if you just turn on this ability for a short while.  We can
+capture a random sub-sample of the traced data:
+
+    (p/set-config! 'user :exit-fn
+	   '[(policy/random-sample 0.01)
+         (select-keys [:fname :return :args]) 
+         (sink/memory my-tests)])
+
+We can used a fixed length in-memory queue to keep the last N items
+
+    (def my-tests (sink/make-memory))
+    (p/set-config! 'user :exit-fn
+	   '[(policy/random-sample 0.01)
+         (select-keys [:fname :return :args]) 
+         (sink/fixed-memory my-tests 5)])
+
+    (dotimes [i 10]
+      (testprobe i 10))
+
+    (clojure.pprint/pprint (seq @my-tests))
+    => ({:args (5 10), :return 16, :fname testprobe} 
+        {:args (7 10), :return 17, :fname testprobe} 
+        {:args (8 10), :return 18, :fname testprobe} 
+        {:args (9 10), :return 19, :fname testprobe} 
+        {:args (10 10), :return 20, :fname testprobe})
+
+We can also select for specific functions in the namespace:
+        
+    (p/set-config! 'user :exit-fn
+	   '[(policy/select-fn testprobe)
+         (select-keys [:fname :return :args]) 
+         (sink/memory my-tests)])
+    
+Or only collect data when there are failures:
+
+    (p/remove-config! 'user :exit-fn)
+    (p/set-config! 'user :except-fn
+	   '[(select-keys [:ts :fname :return :args])
+         sink/console-raw])
+
+    (reset! my-tests (sink/make-memory))
+
+    (defn testprobe [a b] (if (= a 2) (throw (Exception. "oops")) (+ a b 1)))
+    (testprobe 1 3)
+    => 5
+	(testprobe 2 3)
+    {:args (2 3), :fname testprobe}
+    ; Evaluation aborted.
+
+Finally, what if you just want to write a log in the (almost) traditional way?
+
+    (use '[probe.logging :as log])
+    (log/error :msg "This is an error" :exception e :value 10)
+
+This uses the Pedestal convention promoted by Relevance, but captures
+the structured data before converting it to a string.  This statement
+is equivalent to:
+
+    (probe [:error] :msg "This is an error" :exception e :value 10)
+
+except that the probe statement is only called if the underlying
+logger for that namespace is active.

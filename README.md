@@ -245,15 +245,16 @@ We can also watch state elements like Refs and Vars by applying a transform func
 
 Note: probing alter-var-root operations on namespace vars is still a little shaky so don't rely on this functionality yet.
 
-Other features we'll document soon:
+Other implemented features we'll document soon:
 
 - Using the logging namespace
-- Setting / unsetting probes on all publics in a namespace, etc
-- Other memory options (like a sliding window queue)
+- Capturing streams of exceptions for post-analysis
+- Capturing dynamic bindings in probe points
 - Sampling transform channels
 - Using log sinks
 - Creating a database sink example
-- Capturing streams of exceptions for post-analysis
+- Other memory options (like a sliding window queue)
+- Setting / unsetting probes on all publics in a namespace, etc
 - Low level access via write-state
 
 ## Discussion
