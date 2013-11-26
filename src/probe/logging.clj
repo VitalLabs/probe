@@ -25,7 +25,7 @@
   (let [amap (apply array-map keyvals)
         exception' (:exception amap)
         tags' (set (concat (expand-tags [level]) (:tags amap)))
-        keyvals' (mapcat identity (remove #(#{:exception :tags} (first %))
+        keyvals' (mapcat identity (remove #(#{:exception} (first %))
                                           (partition 2 keyvals)))]
     `(when (subscribers? ~tags')
        ~(if exception'
