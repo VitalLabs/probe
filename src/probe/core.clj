@@ -44,7 +44,7 @@
       (recur))))
 
 (defn sink-names []
-  (keys sinks))
+  (keys @sinks))
 
 (defn get-sink [name]
   (@sinks name))
