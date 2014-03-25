@@ -55,7 +55,7 @@ accessible than Lamina, but YMMV.  The more the merrier!
 
 Add Probe to your lein project.clj :dependencies
 
-    [com.vitalreactor/probe "0.9.0"]
+    [com.vitalreactor/probe "0.9.1"]
 
 And use it from your applications:
 
