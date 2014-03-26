@@ -108,7 +108,7 @@ Reserved tags:
 ## Documentation by Example
 
     (require '[probe.core :as p])
-	(require '[probe.sink :as sink]
+	(require '[probe.sink :as sink])
 	(require '[core.async :as async])
 
 Start with a simple console sink
@@ -175,7 +175,7 @@ Let's explore some other probing conveniences.  For example, good
 functional code comes pre-packaged with some wonderful probe points
 called functions.
 
-    (def testprobe [a b]
+    (defn testprobe [a b]
 	  (+ a b))
 
     (p/probe-fn! #{:test} 'testprobe)
