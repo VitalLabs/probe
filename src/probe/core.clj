@@ -91,11 +91,11 @@
   ([name f]
      (add-sink name f false)))
 
-       
+
 ;;
 ;; ## Subscriptions
 ;;
-       
+
 (defonce ^:private subscription-table (atom {}))
 
 (defn subscriptions []
@@ -160,7 +160,7 @@
        (swap! subscription-table dissoc [selector sink-name])
        (memo/memo-clear! subscribers)
        nil)))
-  
+
 (defn unsubscribe-all []
   (doall
    (map (fn [[sel sink]]
@@ -171,7 +171,7 @@
 ;;
 ;; ## Router
 ;;
-               
+
 (defonce input (chan))
 
 (defn write-state
@@ -179,13 +179,20 @@
   [state]
   (>!! input state))
 
-(def router-handler 
+(defn deduplicate-sinks
+  [tags]
+  (->> (subscribers tags)
+       (sort-by :sink)
+       (partition-by :sink)
+       (map first)))
+
+(def router-handler
   (go-loop []
     (let [state (<! input)]
       (clog/trace "Routing probe state: " state)
       (when-let [tags (and (map? state) (:tags state))]
         (when (coll? tags)
-          (doseq [sub (subscribers tags)]
+          (doseq [sub (deduplicate-sinks tags)]
             (try
               (clog/trace "Writing channel for: " [(:name sub) (:sink sub)])
               (>! (:channel sub) state)
@@ -346,7 +353,7 @@
 
 (defn- state? [ref]
   (let [type (type ref)]
-    (or (= clojure.lang.Var type)    
+    (or (= clojure.lang.Var type)
         (= clojure.lang.Ref type)
         (= clojure.lang.Atom type)
         (= clojure.lang.Agent type))))
@@ -371,7 +378,7 @@
         :default
         (throw (ex-info "Do not know how to probe provided reference"
                         {:ref ref :type (type ref)}))))
-             
+
 
 (defn probe-state!
   "Add a probe function to a state element or symbol
@@ -387,7 +394,7 @@
   (let [stateval (resolve-ref ref)]
     (remove-watch stateval ::probe)))
 
-    
+
 ;;
 ;; Function probes
 ;; -----------------------------------------
@@ -460,4 +467,3 @@
   (probe-var-fns (keys (ns-interns ns))))
 (defn unprobe-ns-all! [ns]
   (unprobe-var-fns (keys (ns-interns ns))))
-
