@@ -135,16 +135,16 @@
 
 ;;leave this here for now, but find a better place for it
 (defn- sampler-fn [max]
-  (let [count (atom 0)]
+  (let [count (atom 1)]
     (fn [_]
-      (if (> @count max)
-        (do (reset! count 0) true)
+      (if (>= @count max)
+        (do (reset! count 1) true)
         (do (swap! count inc) false)))))
 
 (defn mk-sample-fn
   [freq]
-  {:pre [(float? freq)]}
-  (sampler-fn (int (/ 1 freq))))
+  {:pre [(number? freq)]}
+  (sampler-fn freq))
 
 
 ;TODO there is probably a better way to build this
