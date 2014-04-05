@@ -261,6 +261,7 @@ We can transform the state passed to the sink
 {:fname testprobe :args (1 0) :value 1}
 {:fname testprobe :args (1 1) :value 1}
 ...
+```
 
 Filters
 
