@@ -107,57 +107,67 @@ Reserved tags:
 
 ## Documentation by Example
 
-    (require '[probe.core :as p])
-	(require '[probe.sink :as sink]
-	(require '[core.async :as async])
-
+```clojure
+(require '[probe.core :as p])
+(require '[probe.sink :as sink]
+(require '[core.async :as async])
+```
 Start with a simple console sink
 
-	(p/add-sink :printer sink/console-raw)
-
+```clojure
+(p/add-sink :printer sink/console-raw)
+```
 Let's watch some test probe points:
 
-    (p/subscribe #{:test} :printer)
+```clojure
+(p/subscribe #{:test} :printer)
 
-	(p/probe [:test] :value 10)
-	=> nil
-	{:ts #inst "2013-11-19T01:21:57.109-00:00", :thread-id 307, :ns probe.core, :tags #{:test :ns/probe.core :ns/probe}, :line 1, :value 10}
+(p/probe [:test] :value 10)
+=> nil
+{:ts #inst "2013-11-19T01:21:57.109-00:00", :thread-id 307, :ns probe.core, :tags #{:test :ns/probe.core :ns/probe}, :line 1, :value 10}
+```
 
 Probe state is only sent to the sink when the selector matches the
 tags.  In fact, the entire probe expression is conditional on there
 being at least one matching probe for the tags.
 
-    (p/probe [:foo] :value 10)
-	=> nil
-
+```clojure
+(p/probe [:foo] :value 10)
+=> nil
+```
 We can use assign transform to watch just the values and timestamp:
 
-    (p/subscribe #{:test} :printer :transform #(select-keys % [:ts :value]))
+```clojure
+(p/subscribe #{:test} :printer :transform #(select-keys % [:ts :value]))
 
-    (p/probe #{:debug} :value 10)
-	=> nil
-    {:ts #inst "2013-11-19T01:25:37.348-00:00", :value 10}
+(p/probe #{:debug} :value 10)
+=> nil
+{:ts #inst "2013-11-19T01:25:37.348-00:00", :value 10}
+```
 
 What subscriptions do we have now?
 
-	(p/subscriptions)
-	=> ([#{:test} :printer])
-
+```clojure
+(p/subscriptions)
+=> ([#{:test} :printer])
+```
 Notice that our update clobbered the prior subscription.  We can grab
 the complete subscription or sink value to get a better sense of
 internals:
 
-    (p/get-subscription #{:test} :printer)
-    => {:selector #{:test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@382226a7>, :sink :printer, :name #{:test}, :transform #<core$mk_transform_fn$fn__5471 probe.core$mk_transform_fn$fn__5471@5be470fd>}
-
+```clojure
+(p/get-subscription #{:test} :printer)
+=> {:selector #{:test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@382226a7>, :sink :printer, :name #{:test}, :transform #<core$mk_transform_fn$fn__5471 probe.core$mk_transform_fn$fn__5471@5be470fd>}
+```clojure
 
 Here we see a selector which determines whether probes are submitted
 at all, the channel to push the state to, the sink that channel is
 connected to, and the transform that will be applied to state.
 
-    (p/get-sink :printer)
-	=> {:name :printer, :function #<sink$console_raw probe.sink$console_raw@1ff3ef9>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@7f528f>, :mix #<async$mix$reify__27625 clojure.core.async$mix$reify__27625@105559f>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@13874b7>}
-
+```clojure
+(p/get-sink :printer)
+=> {:name :printer, :function #<sink$console_raw probe.sink$console_raw@1ff3ef9>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@7f528f>, :mix #<async$mix$reify__27625 clojure.core.async$mix$reify__27625@105559f>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@13874b7>}
+```
 Sinks uses a core.async mix to accept inputs from multiple
 subscriptions and pipes them to the sink handler function.  If you
 want to do something for every state submitted to a sink, you can just
@@ -175,73 +185,77 @@ Let's explore some other probing conveniences.  For example, good
 functional code comes pre-packaged with some wonderful probe points
 called functions.
 
-    (defn testprobe [a b]
-	  (+ a b))
+```clojure
+(defn testprobe [a b]
+ (+ a b))
 
-    (p/probe-fn! #{:test} 'testprobe)
+(p/probe-fn! #{:test} 'testprobe)
 
-	(testprobe 1 2)
-    => 3
+(testprobe 1 2)
+=> 3
 
-    (p/subscribe #{:test} :printer) ;; stomp on our earlier filter
+(p/subscribe #{:test} :printer) ;; stomp on our earlier filter
 
-	(testprobe 1 2)
-  	=> 3
-    {:ts #inst "2013-11-19T01:36:28.237-00:00", :thread-id 321, :ns probe.core, :tags #{:test :ns/probe.core :ns/probe :probe/fn-enter}, :args (1 2), :fn :enter, :line 1, :fname testprobe}
-    {:ts #inst "2013-11-19T01:36:28.237-00:00", :thread-id 321, :ns probe.core, :tags #{:probe/fn-exit :test :ns/probe.core :ns/probe}, :return 3, :args (1 2), :fn :exit, :line 1, :fname testprobe}
-
+(testprobe 1 2)
+=> 3
+{:ts #inst "2013-11-19T01:36:28.237-00:00", :thread-id 321, :ns probe.core, :tags #{:test :ns/probe.core :ns/probe :probe/fn-enter}, :args (1 2), :fn :enter, :line 1, :fname testprobe}
+{:ts #inst "2013-11-19T01:36:28.237-00:00", :thread-id 321, :ns probe.core, :tags #{:probe/fn-exit :test :ns/probe.core :ns/probe}, :return 3, :args (1 2), :fn :exit, :line 1, :fname testprobe}
+```
 We can now magically trace input arguments and return values for every
 expression.  How about just focusing on the input/outputs?  We can use
 some channel builders from the probe.core package to make this more concise.
 
-    (defn args-and-value [state] (select-keys state [:args :value :fname]))
-    (p/subscribe #{:test :probe/fn-exit} :printer :transform args-and-value)
+```clojure
+(defn args-and-value [state] (select-keys state [:args :value :fname]))
+(p/subscribe #{:test :probe/fn-exit} :printer :transform args-and-value)
 
-	(map #(testprobe 1 %) (repeat 0 10))
-  	=> (1 2 3 4 5 6 7 8 9 10)
-    {:fname testprobe :args (1 0) :value 1}
-    {:fname testprobe :args (1 1) :value 1}
-	...
-
+(map #(testprobe 1 %) (repeat 0 10))
+=> (1 2 3 4 5 6 7 8 9 10)
+{:fname testprobe :args (1 0) :value 1}
+{:fname testprobe :args (1 1) :value 1}
+...
+```
 So far, we've just been printing stuff out.  Not much better than
 current logging solutions.  What if we want to capture these vectors,
 or a function trace from from deep inside a larger system for
 interactive replay at the repl?
 
-    (def my-trace (sink/make-memory))
-	(p/add-sink :accum (sink/memory-sink my-trace))
-	(p/subscribe #{:test :probe/fn-exit} :accum :transform args-and-value)
+```clojure
+(def my-trace (sink/make-memory))
+(p/add-sink :accum (sink/memory-sink my-trace))
+(p/subscribe #{:test :probe/fn-exit} :accum :transform args-and-value)
 
-	(map #(testprobe 1 %) (range 0 10))
-    => (1 2 3 4 5 6 7 8 9 10)
+(map #(testprobe 1 %) (range 0 10))
+=> (1 2 3 4 5 6 7 8 9 10)
 
-    (sink/scan-memory)
-    => ({:fname testprobe, :value 1 :args (1 0)} {:fname testprobe, :value 2 :args (1 1)} ...)
+(sink/scan-memory)
+=> ({:fname testprobe, :value 1 :args (1 0)} {:fname testprobe, :value 2 :args (1 1)} ...)
 
-    (map :value (sink/scan-memory))
-    => (1 2 3 4 5 6 7 8 9 10)
+(map :value (sink/scan-memory))
+=> (1 2 3 4 5 6 7 8 9 10)
 
-    (def my-trace nil)  ;; remove state from namespace for GC
-	(unprobe-fn! 'testprobe) ;; Remove the function probe wrapper
-    (p/rem-sink :accum) ;; also removes the probe subscription for you
-
+(def my-trace nil)  ;; remove state from namespace for GC
+(unprobe-fn! 'testprobe) ;; Remove the function probe wrapper
+(p/rem-sink :accum) ;; also removes the probe subscription for you
+```
 We can also watch state elements like Refs and Vars by applying a transform function that generates a probe by applying the transform-fn to the new value whenever the state is changed:
 
-    (def myatom (atom {:test 1}))
-    (def myref (ref {:test 1}))
-    (probe-state! #{:test} identity #'myref)
-    (probe-state! #{:test} identity #'myatom)
-    (p/subscribe #{:test :probe/watch} :printer)
+```clojure
+(def myatom (atom {:test 1}))
+(def myref (ref {:test 1}))
+(probe-state! #{:test} identity #'myref)
+(probe-state! #{:test} identity #'myatom)
+(p/subscribe #{:test :probe/watch} :printer)
 
-    (swap! myatom update-in [:test] inc)
-    => {:test 2}
-    {:ts #inst "2013-11-19T19:55:03.849-00:00", :ns probe.core, :test 2, :thread-id 97, :tags #{:test :probe/watch :ns/probe.core :ns/probe}}
+(swap! myatom update-in [:test] inc)
+=> {:test 2}
+{:ts #inst "2013-11-19T19:55:03.849-00:00", :ns probe.core, :test 2, :thread-id 97, :tags #{:test :probe/watch :ns/probe.core :ns/probe}}
 
-    (dosync
-      (commute myref update-in [:test] inc))
-    => {:test 2}
-	{:ts #inst "2013-11-19T19:58:24.961-00:00", :ns probe.core, :test 2, :thread-id 103, :tags #{:test :probe/watch :ns/probe.core :ns/probe}}
-
+(dosync
+(commute myref update-in [:test] inc))
+=> {:test 2}
+{:ts #inst "2013-11-19T19:58:24.961-00:00", :ns probe.core, :test 2, :thread-id 103, :tags #{:test :probe/watch :ns/probe.core :ns/probe}}
+```
 Note: probing alter-var-root operations on namespace vars is still a little shaky so don't rely on this functionality yet.
 
 Transforms, Filters, and Sampling
