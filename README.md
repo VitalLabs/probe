@@ -17,7 +17,7 @@ Moving from logs to 'probes', or capturing the state of a program
 value at a point in time, enables us to attach a wide variety of
 comptuational stages between the probe point and human-consumption of
 that state.  This works particularly well for functional systems where
-state is predominantly immutable.  
+state is predominantly immutable.
 
 This library facilitates the insertion of 'probe' points into your
 source code as well as various dynamic contexts (such as state change
@@ -25,7 +25,7 @@ events or function invocations).  A probe point generates an arbitrary
 'state map' of program state as well as facilities for 'subscribing' subsets
 of state across the program.  A flexible tagging system allows you to
 link probes together across namespaces, run them through a set of
-filters or other transforms, and to any number of different 
+filters or other transforms, and to any number of different
 destination 'sinks'.
 
 The state map produced by probe points can serve as logging
@@ -62,7 +62,7 @@ And use it from your applications:
     (:require [probe.core :as p]
 	          [probe.sink :as sink]
               [probe.logging :as log])
-    
+
 Probe and log statements look like this:
 
     (p/probe [:tag] :msg "This is a test" :value 10)
@@ -89,7 +89,7 @@ sinks with an optional transform channel.
     way, typically to a logging subsystem, the console, memory or a database.
 * Subscriptions - This is the library's glue, consisting of a Selector, an
     optional core.async Channel, and a sink name.
-* Selector - a conjunction of tags that must be present for the probe state to 
+* Selector - a conjunction of tags that must be present for the probe state to
     be pushed onto the channel and on to the sink.
 
 Reserved state keys
@@ -120,7 +120,7 @@ Let's watch some test probe points:
     (p/subscribe #{:test} :printer)
 
 	(p/probe [:test] :value 10)
-	=> nil    
+	=> nil
 	{:ts #inst "2013-11-19T01:21:57.109-00:00", :thread-id 307, :ns probe.core, :tags #{:test :ns/probe.core :ns/probe}, :line 1, :value 10}
 
 Probe state is only sent to the sink when the selector matches the
@@ -130,10 +130,9 @@ being at least one matching probe for the tags.
     (p/probe [:foo] :value 10)
 	=> nil
 
-We can use a core.async transform channel to watch just the values and timestamp:
+We can use assign transform to watch just the values and timestamp:
 
-    (p/subscribe #{:test} :printer
-        (async/map> #(select-keys % [:ts :value]) (async/chan)))
+    (p/subscribe #{:test} :printer :transform #(select-keys % [:ts :value]))
 
     (p/probe #{:debug} :value 10)
 	=> nil
@@ -141,7 +140,7 @@ We can use a core.async transform channel to watch just the values and timestamp
 
 What subscriptions do we have now?
 
-	(p/subscriptions) 
+	(p/subscriptions)
 	=> ([#{:test} :printer])
 
 Notice that our update clobbered the prior subscription.  We can grab
@@ -149,11 +148,12 @@ the complete subscription or sink value to get a better sense of
 internals:
 
     (p/get-subscription #{:test} :printer)
-    => {:selector #{:test}, :channel #<async$map_GT_$reify__26869 clojure.core.async$map_GT_$reify__26869@f7503>, :sink :printer}
+    => {:selector #{:test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@382226a7>, :sink :printer, :name #{:test}, :transform #<core$mk_transform_fn$fn__5471 probe.core$mk_transform_fn$fn__5471@5be470fd>}
+
 
 Here we see a selector which determines whether probes are submitted
-at all, the channel to push the state to, and the sink that channel is
-connected to.
+at all, the channel to push the state to, the sink that channel is
+connected to, and the transform that will be applied to state.
 
     (p/get-sink :printer)
 	=> {:name :printer, :function #<sink$console_raw probe.sink$console_raw@1ff3ef9>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@7f528f>, :mix #<async$mix$reify__27625 clojure.core.async$mix$reify__27625@105559f>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@13874b7>}
@@ -175,7 +175,7 @@ Let's explore some other probing conveniences.  For example, good
 functional code comes pre-packaged with some wonderful probe points
 called functions.
 
-    (def testprobe [a b]
+    (defn testprobe [a b]
 	  (+ a b))
 
     (p/probe-fn! #{:test} 'testprobe)
@@ -195,7 +195,7 @@ expression.  How about just focusing on the input/outputs?  We can use
 some channel builders from the probe.core package to make this more concise.
 
     (defn args-and-value [state] (select-keys state [:args :value :fname]))
-    (p/subscribe #{:test :probe/fn-exit} :printer (p/map> args-and-value))
+    (p/subscribe #{:test :probe/fn-exit} :printer :transform args-and-value)
 
 	(map #(testprobe 1 %) (repeat 0 10))
   	=> (1 2 3 4 5 6 7 8 9 10)
@@ -210,7 +210,7 @@ interactive replay at the repl?
 
     (def my-trace (sink/make-memory))
 	(p/add-sink :accum (sink/memory-sink my-trace))
-	(p/subscribe #{:test :probe/fn-exit} :accum (p/map> args-and-value))
+	(p/subscribe #{:test :probe/fn-exit} :accum :transform args-and-value)
 
 	(map #(testprobe 1 %) (range 0 10))
     => (1 2 3 4 5 6 7 8 9 10)
@@ -244,6 +244,83 @@ We can also watch state elements like Refs and Vars by applying a transform func
 
 Note: probing alter-var-root operations on namespace vars is still a little shaky so don't rely on this functionality yet.
 
+Transforms, Filters, and Sampling
+
+Transforms
+
+We can transform the state passed to the sink
+
+```clojure
+
+(defn args-and-value [state] (select-keys state [:args :value :fname]))
+
+(p/subscribe #{:test :probe/fn-exit} :printer :transform args-and-value)
+
+(map #(testprobe 1 %) (repeat 0 10))
+=> (1 2 3 4 5 6 7 8 9 10)
+{:fname testprobe :args (1 0) :value 1}
+{:fname testprobe :args (1 1) :value 1}
+...
+
+Filters
+
+We can filter probes to only grab the state that we want
+
+```clojure
+(p/subscribe #{:filter-test} :printer :filter #(= 42 (:value %)))
+
+=> {:selector #{:filter-test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@4fc063f6>, :sink :printer, :name #{:filter-test}, :transform #<core$mk_transform_fn$fn__5457 probe.core$mk_transform_fn$fn__5457@5fe2d461>}
+
+(p/probe [:filter-test] :value 42)
+{:ts #inst "2014-04-05T03:23:52.896-00:00", :thread-id 63, :ns user, :tags #{:filter-test :ns/user}, :line 1, :value 42}
+
+(p/probe [:filter-test] :value 43)
+=>
+```
+
+Sampling
+
+If we don't want to send all probes to the sink, it is possible to send only a sample set
+
+```clojure
+(p/subscribe #{:sample-test} :printer :sample-freq 4.0)
+=> {:selector #{:sample-test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@43beaa92>, :sink :printer, :name #{:sample-test}, :transform #<core$mk_transform_fn$fn__5457 probe.core$mk_transform_fn$fn__5457@1ab079fd>}
+
+(p/probe [:sample-test])
+
+(p/probe [:sample-test])
+{:ts #inst "2014-04-05T03:14:21.941-00:00", :thread-id 47, :ns user, :tags #{:ns/user :sample-test}, :line 1}
+```
+
+Transforms, Filters, and Sampling can all be used together!
+
+```clojure
+(p/subscribe #{:transform-filter-sample}
+             :printer
+             :transform #(assoc % :assoced-val "val")
+             :filter #(= 42 (:value %))
+             :sample-freq 4.0)
+=> {:selector #{:transform-filter-sample}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@544bbff1>, :sink :printer, :name #{:transform-filter-sample}, :transform #<core$mk_transform_fn$fn__5457 probe.core$mk_transform_fn$fn__5457@39269273>}
+
+(p/probe [:transform-filter-sample] :value 42)
+
+(p/probe [:transform-filter-sample] :value 42)
+{:assoced-val "val", :ts #inst "2014-04-05T03:34:29.422-00:00", :thread-id 76, :ns user, :tags #{:ns/user :transform-filter-sample}, :line 1, :value 42}
+
+(p/probe [:transform-filter-sample] :value 43)
+
+(p/probe [:transform-filter-sample] :value 43)
+
+(p/probe [:transform-filter-sample] :value 43)
+
+(p/probe [:transform-filter-sample] :value 42)
+{:assoced-val "val", :ts #inst "2014-04-05T03:37:31.955-00:00", :thread-id 86, :ns user, :tags #{:ns/user :transform-filter-sample}, :line 1, :value 42}
+
+(p/probe [:transform-filter-sample] :value 42)
+
+```
+
+
 Other implemented features we'll document soon:
 
 - Using the logging namespace
@@ -272,7 +349,7 @@ Here are some opportunities to improve the library.
 
 * Add higher level channel constructor support
 * Add a clojure EDN file sink
-* Record the stack state at a probe point 
+* Record the stack state at a probe point
 * Add higher level targeted function tracing / collection facilities
   (e.g. trace 100 input/result vectors from function f or namespace ns)
 * Add metadata so we can inspect what functions are probed
@@ -280,9 +357,12 @@ Here are some opportunities to improve the library.
 
 ### Major Tasks
 
-* Deduplication.  It's easy to create multiple paths to the same sink; how do we
+* ~~Deduplication.  It's easy to create multiple paths to the same sink; how do we
      handle (or do we) deduplication particularly when subscription channels
-     may transform the data invalidating an = comparison?
+     may transform the data invalidating an = comparison?~~
+     state is dropped onto an async routing channel where all trasforms,
+     filters, and sampling fns are evaluated, deduplicated, and then passed
+     to the appropriate subscribers channels and ultimately the subscribers sink.
 * Complex topologies.  Right now we have a single transforming channel between
      a selector and a sink.  What if we wanted to share functionality across
      streams?  How would we specify, wire up, and control a more complex topology?
@@ -291,5 +371,3 @@ Here are some opportunities to improve the library.
      allow for injecting these log messages into clj-probe middleware.  Ignore
      any that we inject using the log sink.  This may be non-trivial.
 * Adapt the function probes to collect profile information
-
-   	 

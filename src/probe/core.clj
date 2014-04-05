@@ -132,22 +132,57 @@
     (assert (and sink subscription))
     (async/unmix (:mix sink) (:channel subscription))))
 
+
+;;leave this here for now, but find a better place for it
+(defn- sampler-fn [max]
+  (let [count (atom 0)]
+    (fn [_]
+      (if (> @count max)
+        (do (reset! count 0) true)
+        (do (swap! count inc) false)))))
+
+(defn mk-sample-fn
+  [freq]
+  {:pre [(float? freq)]}
+  (sampler-fn (int (/ 1 freq))))
+
+
+;TODO there is probably a better way to build this
+;up without creating anon true fns
+(defn mk-transform-fn
+  "Returns a fn that will evaluate any transforms,
+   filters,or sample-freqs.  Returns nil if
+   any of the predicate fns return false."
+  [transform filter sample-freq]
+  (let [transform-fn (or transform identity)
+        filter-fn    (or filter (fn [_] true))
+        sample-fn    (if sample-freq
+                       (mk-sample-fn sample-freq)
+                       (fn [_] true))]
+    (fn [state]
+      (let [valid (every? true? ((juxt filter-fn sample-fn) state))]
+        (if valid
+          (transform-fn state)
+          nil)))))
+
+
 (defn subscribe
-  ([selector sink-name channel]
+  ([selector sink-name & {:keys [transform filter sample-freq]}]
      {:pre [(set? selector) (keyword? sink-name)]}
      (let [existing (get-subscription selector sink-name)
+           transform-fn (mk-transform-fn transform filter sample-freq)
            subscription {:selector (set selector)
-                         :channel channel
+                         :channel (chan)
                          :sink sink-name
-                         :name selector}]
+                         :name selector
+                         :transform transform-fn}]
        (when existing
          (unsubscribe selector sink-name))
        (link-to-sink subscription)
        (swap! subscription-table assoc [selector sink-name] subscription)
        (memo/memo-clear! subscribers)
-       subscription))
-  ([selector sink-name]
-     (subscribe selector sink-name (chan))))
+       subscription)))
+
 
 (defn unsubscribe
   ([selector sink-name]
@@ -179,12 +214,32 @@
   [state]
   (>!! input state))
 
-(defn deduplicate-sinks
-  [tags]
-  (->> (subscribers tags)
-       (sort-by :sink)
-       (partition-by :sink)
-       (map first)))
+(defn- mk-state-sub-map
+  [state subscribers]
+  (map #(hash-map :sub % :new-state ((:transform %) state)) subscribers))
+
+(defn- dedup-states
+  "Deduplicates transformed states. returns
+   a seq of maps of :sub (subscriber ) and
+   :new-state (state transformed by (:transform sub))"
+  [state subscribers]
+  (let [state-sub-map (mk-state-sub-map state subscribers)]
+    (map first
+         (->
+          (group-by :new-state state-sub-map)
+          (dissoc nil)
+          (vals)))))
+
+(defn- dedup-sinks
+  "Map dedup-states to each sink, preventing
+   us from sending multiple copies of the same
+   state to each sink"
+  [tags state]
+  (let [subs (subscribers tags)]
+    (mapcat (partial dedup-states state)
+            (->
+             (group-by :sink subs)
+             (vals)))))
 
 (def router-handler
   (go-loop []
@@ -192,10 +247,11 @@
       (clog/trace "Routing probe state: " state)
       (when-let [tags (and (map? state) (:tags state))]
         (when (coll? tags)
-          (doseq [sub (deduplicate-sinks tags)]
+          (doseq [sub (dedup-sinks tags state)]
             (try
-              (clog/trace "Writing channel for: " [(:name sub) (:sink sub)])
-              (>! (:channel sub) state)
+              (clog/trace "Writing channel for: " [(:name (:sub sub))
+                                                   (:sink (:sub sub))])
+              (>! (:channel (:sub sub)) (:new-state sub))
               (catch java.lang.Throwable t
                 (>! error-channel {:state ~state :exception t}))))))
       (recur))))
@@ -226,12 +282,6 @@
   ([f]
      (remove> f (async/chan))))
 
-(defn- sampler-fn [max]
-  (let [count (atom 0)]
-    (fn [_]
-      (if (> @count max)
-        (do (reset! count 0) true)
-        (do (swap! count inc) false)))))
 
 (defn sample>
   ([freq c]

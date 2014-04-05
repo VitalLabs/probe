@@ -30,8 +30,6 @@
       (update-in state [key] inc)
       state)))
 
-(defn incrementing-channel [key]
-  (map> (incrementer-fn key)))
 
 (facts "subscriptions"
   (unsubscribe-all)
@@ -52,7 +50,7 @@
   (unsubscribe-all)
   (reset! history1 nil)
   (add-sink :history1 history-sink1 true)
-  (subscribe #{:test} :history1 (incrementing-channel :count))
+  (subscribe #{:test} :history1 :transform (incrementer-fn :count))
 ;;  (add-sink :printer println)
 ;;  (subscribe #{:test} (incrementing-channel :count) :printer)
   (write-state {:tags #{:test} :foo :bar})
@@ -124,7 +122,7 @@
   (unsubscribe-all)
   (reset! history1 nil)
   (add-sink :history1 history-sink1 true)
-  (subscribe #{:test} :history1 (incrementing-channel :count))
+  (subscribe #{:test} :history1 :transform (incrementer-fn :count))
 
   (fact "are not captured by default"
     (probe #{:test} :count 1)
