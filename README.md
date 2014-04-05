@@ -163,7 +163,7 @@ internals:
 ```clojure
 (p/get-subscription #{:test} :printer)
 => {:selector #{:test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@382226a7>, :sink :printer, :name #{:test}, :transform #<core$mk_transform_fn$fn__5471 probe.core$mk_transform_fn$fn__5471@5be470fd>}
-```clojure
+```
 
 Here we see a selector which determines whether probes are submitted
 at all, the channel to push the state to, the sink that channel is
