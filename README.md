@@ -108,7 +108,7 @@ Reserved tags:
 ## Documentation by Example
 
     (require '[probe.core :as p])
-	(require '[probe.sink :as sink]
+	(require '[probe.sink :as sink])
 	(require '[core.async :as async])
 
 Start with a simple console sink
@@ -175,7 +175,7 @@ Let's explore some other probing conveniences.  For example, good
 functional code comes pre-packaged with some wonderful probe points
 called functions.
 
-    (def testprobe [a b]
+    (defn testprobe [a b]
 	  (+ a b))
 
     (p/probe-fn! #{:test} 'testprobe)
@@ -197,7 +197,7 @@ some channel builders from the probe.core package to make this more concise.
     (defn args-and-value [state] (select-keys state [:args :value :fname]))
     (p/subscribe #{:test :probe/fn-exit} :printer (p/map> args-and-value))
 
-	(map #(testprobe 1 %) (repeat 0 10))
+	(map #(testprobe 1 %) (range 0 10))
   	=> (1 2 3 4 5 6 7 8 9 10)
     {:fname testprobe :args (1 0) :value 1}
     {:fname testprobe :args (1 1) :value 1}
