@@ -28,6 +28,9 @@
        (clog/error "Probe error detected" state exception)
        (recur)))))
 
+
+
+
 ;;
 ;; ## Sinks
 ;;
@@ -49,7 +52,8 @@
 (defn get-sink [name]
   (@sinks name))
 
-(declare unsubscribe sink-subscriptions link-to-sink unlink-from-sink)
+(declare unsubscribe sink-subscriptions link-to-sink
+         unlink-from-sink parse-sink-policy)
 
 (defn rem-sink
   "Remove a sink and all subscriptions"
@@ -67,7 +71,7 @@
 
 (defn add-sink
   "Create a named sink function for probe state"
-  ([name f force?]
+  ([name f & {:keys [force? policy]}]
      {:pre [(keyword? name)]}
      (let [prior (get-sink name)]
        (when prior
@@ -78,18 +82,90 @@
      (let [c (chan)
            mix (async/mix c)
            out (sink-processor f c)
+           policy-fn (parse-sink-policy policy)
            sink {:name name
                  :function f
                  :in c
                  :mix mix
-                 :out out}]
+                 :out out
+                 :policy-fn policy-fn}]
        (swap! sinks assoc name sink)
        (when force?
          (map (fn [sub] (link-to-sink sub))
               (sink-subscriptions name)))
-       sink))
-  ([name f]
-     (add-sink name f false)))
+       sink)))
+
+(defn swap-sink-policy!
+  "Change the duplication policy on an existing sink"
+  [name policy]
+  {:pre [(keyword? name) (or (keyword? policy) (fn? policy))]}
+  (if-let [prior (get-sink name)]
+    (let [policy-fn (parse-sink-policy policy)
+          with-policy (assoc prior :policy-fn policy-fn)]
+      (swap! sinks #(assoc % name with-policy))
+      with-policy)
+    (throw (ex-info (str "No sink configured for name " name) {:sink name}))))
+
+
+;;
+;; sink data de-duplication Policy Helpers
+;; ---------------------------------------
+
+
+(defn mk-state-sub-map
+  [state subscribers]
+  (map #(hash-map :sub % :new-state ((:transform %) state)) subscribers))
+
+(defn policy-unique
+  "Deduplicates transformed states. returns
+   a seq of maps of :sub (subscriber ) and
+   :new-state (state transformed by (:transform sub))"
+  [state subscribers]
+  (let [state-sub-map (mk-state-sub-map state subscribers)]
+    (map first
+         (->
+          (group-by :new-state state-sub-map)
+          (dissoc nil)
+          (vals)))))
+
+(defn policy-first
+  "Grabs the first subscriber passed to a sink,
+   applies transform and returns only that state"
+  [state subscribers]
+  (let [state-sub-map (mk-state-sub-map state subscribers)]
+    (if-let [s (ffirst
+                (->
+                 (group-by :new-state state-sub-map)
+                 (dissoc nil)
+                 (vals)))]
+      (vector s)
+      (vector))))
+
+(defn policy-all
+  "Applies transform to state for all subscribers"
+  [state subscribers]
+  (let [state-sub-map (mk-state-sub-map state subscribers)]
+    (reduce concat
+     (->
+      (group-by :new-state state-sub-map)
+      (dissoc nil)
+      (vals)))))
+
+;;Map of provided sink policy fns
+(def sink-policies
+  {:all policy-all
+   :first policy-first
+   :unique policy-unique})
+
+(defn parse-sink-policy
+  [policy]
+  (cond
+   (fn? policy) policy
+   (keyword? policy) (or
+                      (get sink-policies policy)
+                      (throw (ex-info (str "No policy of name: " policy) {})))
+   :else (:all sink-policies)))
+
 
 
 ;;
@@ -132,50 +208,16 @@
     (assert (and sink subscription))
     (async/unmix (:mix sink) (:channel subscription))))
 
-
-;;leave this here for now, but find a better place for it
-(defn- sampler-fn [max]
-  (let [count (atom 1)]
-    (fn [_]
-      (if (>= @count max)
-        (do (reset! count 1) true)
-        (do (swap! count inc) false)))))
-
-(defn mk-sample-fn
-  [freq]
-  {:pre [(number? freq)]}
-  (sampler-fn freq))
-
-
-;TODO there is probably a better way to build this
-;up without creating anon true fns
-(defn mk-transform-fn
-  "Returns a fn that will evaluate any transforms,
-   filters,or sample-freqs.  Returns nil if
-   any of the predicate fns return false."
-  [transform filter sample-freq]
-  (let [transform-fn (or transform identity)
-        filter-fn    (or filter (fn [_] true))
-        sample-fn    (if sample-freq
-                       (mk-sample-fn sample-freq)
-                       (fn [_] true))]
-    (fn [state]
-      (let [valid (every? true? ((juxt filter-fn sample-fn) state))]
-        (if valid
-          (transform-fn state)
-          nil)))))
-
-
 (defn subscribe
-  ([selector sink-name & {:keys [transform filter sample-freq]}]
+  ([selector sink-name & {:keys [transform]}]
      {:pre [(set? selector) (keyword? sink-name)]}
      (let [existing (get-subscription selector sink-name)
-           transform-fn (mk-transform-fn transform filter sample-freq)
+           ;transform-fn (mk-transform-fn transform filter sample-freq)
            subscription {:selector (set selector)
                          :channel (chan)
                          :sink sink-name
                          :name selector
-                         :transform transform-fn}]
+                         :transform (or transform identity)}]
        (when existing
          (unsubscribe selector sink-name))
        (link-to-sink subscription)
@@ -214,32 +256,15 @@
   [state]
   (>!! input state))
 
-(defn- mk-state-sub-map
-  [state subscribers]
-  (map #(hash-map :sub % :new-state ((:transform %) state)) subscribers))
-
-(defn- dedup-states
-  "Deduplicates transformed states. returns
-   a seq of maps of :sub (subscriber ) and
-   :new-state (state transformed by (:transform sub))"
-  [state subscribers]
-  (let [state-sub-map (mk-state-sub-map state subscribers)]
-    (map first
-         (->
-          (group-by :new-state state-sub-map)
-          (dissoc nil)
-          (vals)))))
-
-(defn- dedup-sinks
+(defn- apply-sink-policy
   "Map dedup-states to each sink, preventing
    us from sending multiple copies of the same
    state to each sink"
   [tags state]
   (let [subs (subscribers tags)]
-    (mapcat (partial dedup-states state)
-            (->
-             (group-by :sink subs)
-             (vals)))))
+    (mapcat
+     #((:policy-fn (get-sink (first %))) state (second %))
+     (group-by :sink subs))))
 
 (def router-handler
   (go-loop []
@@ -247,7 +272,7 @@
       (clog/trace "Routing probe state: " state)
       (when-let [tags (and (map? state) (:tags state))]
         (when (coll? tags)
-          (doseq [sub (dedup-sinks tags state)]
+          (doseq [sub (apply-sink-policy tags state)]
             (try
               (clog/trace "Writing channel for: " [(:name (:sub sub))
                                                    (:sink (:sub sub))])
@@ -257,38 +282,24 @@
       (recur))))
 
 ;; ==================================
-;; Channel Transform Helpers
+;; Transform Helpers
 ;; ==================================
 
-(defn filter>
-  "Return a channel that applies a filter and
-   if predict is truthy, passes the value to
-   the destination channel or if one is not
-   provided, a generic channel."
-  ([f c]
-     (async/filter> f c))
-  ([f]
-     (filter> f (async/chan))))
 
-(defn map>
-  ([f c]
-     (async/map> f c))
-  ([f]
-     (map> f (async/chan))))
+(defn- sampler-fn [max]
+  "Creates function that returns state once
+   every max calls"
+  (let [count (atom 1)]
+    (fn [state]
+      (if (>= @count max)
+        (do (reset! count 1) state)
+        (do (swap! count inc) nil)))))
 
-(defn remove>
-  ([f c]
-     (async/remove> f c))
-  ([f]
-     (remove> f (async/chan))))
+(defn mk-sample-transform
+  [freq]
+  {:pre [(number? freq)]}
+  (sampler-fn freq))
 
-
-(defn sample>
-  ([freq c]
-     {:pre [(float? freq)]}
-     (map> (sampler-fn (int (/ 1 freq))) c))
-  ([freq]
-     (sample> freq (async/chan))))
 
 
 ;; =============================================

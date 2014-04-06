@@ -263,82 +263,142 @@ We can also watch state elements like Refs and Vars by applying a transform func
 ```
 Note: probing alter-var-root operations on namespace vars is still a little shaky so don't rely on this functionality yet.
 
-Transforms, Filters, and Sampling
+### Subscriber Transforms
 
-Transforms
-
-We can transform the state passed to the sink
-
-```clojure
-
-(defn args-and-value [state] (select-keys state [:args :value :fname]))
-
-(p/subscribe #{:test :probe/fn-exit} :printer :transform args-and-value)
-
-(map #(testprobe 1 %) (repeat 0 10))
-=> (1 2 3 4 5 6 7 8 9 10)
-{:fname testprobe :args (1 0) :value 1}
-{:fname testprobe :args (1 1) :value 1}
-...
-```
-
-Filters
-
-We can filter probes to only grab the state that we want
+You can add a transform to a subscriber to alter the state map passed to the subscribers
+sink, or set sample rate, filter out unwanted data, or compose a function that combines all
+of the above.
 
 ```clojure
-(p/subscribe #{:filter-test} :printer :filter #(= 42 (:value %)))
+user> (p/add-sink :example sink/console-raw) ;add sink
+=> {:name :example, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@6b8e2779>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@41c1b019>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@13105b09>, :policy-fn #<core$policy_all probe.core$policy_all@530db0f9>}
 
-=> {:selector #{:filter-test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@4fc063f6>, :sink :printer, :name #{:filter-test}, :transform #<core$mk_transform_fn$fn__5457 probe.core$mk_transform_fn$fn__5457@5fe2d461>}
+(p/subscribe #{:transform-example} :example :transform #(assoc % :foo "bar")) ;subscribe
+=> {:selector #{:transform-example}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@5d57f865>, :sink :example, :name #{:transform-example}, :transform #<user$eval10227$fn__10228 user$eval10227$fn__10228@4eccf230>}
 
-(p/probe [:filter-test] :value 42)
-{:ts #inst "2014-04-05T03:23:52.896-00:00", :thread-id 63, :ns user, :tags #{:filter-test :ns/user}, :line 1, :value 42}
-
-(p/probe [:filter-test] :value 43)
-=>
+(p/probe [:transform-example])
+=> true
+{:foo "bar", :ts #inst "2014-04-06T23:39:43.206-00:00", :thread-id 157, :ns user, :tags #{:transform-example :ns/user}, :line 1} ;:foo "bar" has been added to the state map
 ```
 
-Sampling
-
-If we don't want to send all probes to the sink, it is possible to send only a sample set
+We can use the provided helper function to create a sample function if we only want a
+fraction of state maps sent to the sink.
 
 ```clojure
-(p/subscribe #{:sample-test} :printer :sample-freq 4.0)
-=> {:selector #{:sample-test}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@43beaa92>, :sink :printer, :name #{:sample-test}, :transform #<core$mk_transform_fn$fn__5457 probe.core$mk_transform_fn$fn__5457@1ab079fd>}
+(p/add-sink :sample-example sink/console-raw) ;add a new sink
+=> {:name :sample-example, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@171ba877>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@18d1287b>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@4bb8aff7>, :policy-fn #<core$policy_all probe.core$policy_all@530db0f9>}
 
-(p/probe [:sample-test])
+;lets take every 3rd state map
+(p/subscribe #{:sample-tag} :sample-example :transform (p/mk-sample-fn 3))
+=>{:selector #{:sample-tag}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@bd35aa2>, :sink :sample-example, :name #{:sample-tag}, :transform #<core$sampler_fn$fn__9747 probe.core$sampler_fn$fn__9747@697b3ca3>}
 
-(p/probe [:sample-test])
-{:ts #inst "2014-04-05T03:14:21.941-00:00", :thread-id 47, :ns user, :tags #{:ns/user :sample-test}, :line 1}
+(p/probe [:sample-tag])
+=>true
+(p/probe [:sample-tag])
+=>true
+(p/probe [:sample-tag])
+=>true
+{:ts #inst "2014-04-06T23:45:00.541-00:00", :thread-id 165, :ns user, :tags #{:ns/user :sample-tag}, :line 1}
+(p/probe [:sample-tag])
+=>true
+(p/probe [:sample-tag])
+=>true
+(p/probe [:sample-tag])
+=>true
+{:ts #inst "2014-04-06T23:45:09.109-00:00", :thread-id 165, :ns user, :tags #{:ns/user :sample-tag}, :line 1} ;Every third state map, as expected.
 ```
 
-Transforms, Filters, and Sampling can all be used together!
+
+### Data de-duplication policy
+
+It is possible for multiple subscribers to send the same state map to the same sink,
+resulting in duplicates.  By default all state maps are passed to a given sink, however
+we can set a policy on the sink if we want to alter that behavior.  Three ready made
+policies exist and are as follows:
+
+ * `:all` -- default policy setting.  All state maps passed.
+ * `:unique` -- A copy of each distinct state map is passed to the sink.
+ * `:first` -- the first non nil state map found is passed to the sink.
+
+You can optionally create your own policy function, provided that it returns a list
+of maps of the form `{:sub <subscriber> :new-state <state after (:transform sub) is applied>}` and takes two args, state (map) and subscribers (seq of subscribers).
+
+The policy on a sink can can be switched at any time with `probe.core/swap-sink-policy!`.
+
+Lets walk through an example.
+
+First, set up a console sink and add some subscribers.
 
 ```clojure
-(p/subscribe #{:transform-filter-sample}
-             :printer
-             :transform #(assoc % :assoced-val "val")
-             :filter #(= 42 (:value %))
-             :sample-freq 4.0)
-=> {:selector #{:transform-filter-sample}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@544bbff1>, :sink :printer, :name #{:transform-filter-sample}, :transform #<core$mk_transform_fn$fn__5457 probe.core$mk_transform_fn$fn__5457@39269273>}
+(p/add-sink :console sink/console-raw)
 
-(p/probe [:transform-filter-sample] :value 42)
+=> {:name :console, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@4dc834d6>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@1304f57f>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@2a916e9a>, :policy-fn #<core$policy_all probe.core$policy_all@3b7359cb>}
 
-(p/probe [:transform-filter-sample] :value 42)
-{:assoced-val "val", :ts #inst "2014-04-05T03:34:29.422-00:00", :thread-id 76, :ns user, :tags #{:ns/user :transform-filter-sample}, :line 1, :value 42}
+;add some subscribers
 
-(p/probe [:transform-filter-sample] :value 43)
+(p/subscribe #{:policy-ex1} :console)
+=> {:selector #{:policy-ex1}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@28657778>, :sink :console, :name #{:policy-ex1}, :transform #<core$identity clojure.core$identity@a8bed44>}
 
-(p/probe [:transform-filter-sample] :value 43)
+(p/subscribe #{:policy-ex2} :console :transform #(assoc % :assoced "value"))
+=>{:selector #{:policy-ex2}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@d9be234>, :sink :console, :name #{:policy-ex2}, :transform #<user$eval9211$fn__9212 user$eval9211$fn__9212@7a41fe1c>}
 
-(p/probe [:transform-filter-sample] :value 43)
-
-(p/probe [:transform-filter-sample] :value 42)
-{:assoced-val "val", :ts #inst "2014-04-05T03:37:31.955-00:00", :thread-id 86, :ns user, :tags #{:ns/user :transform-filter-sample}, :line 1, :value 42}
-
-(p/probe [:transform-filter-sample] :value 42)
-
+(p/subscribe #{:policy-ex3} :console)
+=> {:selector #{:policy-ex3}, :channel #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@7dbd91bc>, :sink :console, :name #{:policy-ex3}, :transform #<core$identity clojure.core$identity@a8bed44>}
 ```
+
+Now we have three subscribers all writing to the same sink.
+
+```clojure
+(p/probe [:policy-ex1 :policy-ex2 :policy-ex3])
+=> true
+
+{:ts #inst "2014-04-06T23:05:25.124-00:00", :thread-id 125, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
+{:ts #inst "2014-04-06T23:05:25.124-00:00", :thread-id 125, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
+{:assoced "value", :ts #inst "2014-04-06T23:05:25.124-00:00", :thread-id 125, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
+```
+As expected all the state maps from our subscribers were passed through to the sink.
+Lets change `:console` to unique.
+
+```clojure
+(p/swap-sink-policy! :console :unique)
+{:policy-fn #<core$policy_unique probe.core$policy_unique@484c3f0b>, :name :console, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@4dc834d6>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@1304f57f>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@2a916e9a>}
+
+(p/probe [:policy-ex1 :policy-ex2 :policy-ex3])
+=>true
+{:ts #inst "2014-04-06T23:14:51.133-00:00", :thread-id 136, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
+{:assoced "value", :ts #inst "2014-04-06T23:14:51.133-00:00", :thread-id 136, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
+```
+
+This time we only got two results.  The sink policy removed one of the two identical state
+maps.
+
+You can also set sink policy at sink creation
+
+```clojure
+(p/add-sink :new-console sink/console-raw :policy :unique)
+=>{:name :new-console, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@2191fa12>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@76b8c4f5>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@5c8aedb7>, :policy-fn #<core$policy_unique probe.core$policy_unique@484c3f0b>}
+```
+
+Lets create our own policy and pass it. Lets just create an easy function to stop any
+state maps from reaching the sink by just passing back an empty list.
+
+```clojure
+user> (def off (fn [_ _] '()))
+#'user/off
+(p/swap-sink-policy! :console off)
+=>{:policy-fn #<user$off user$off@98b1fdb>, :name :console, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@4dc834d6>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@1304f57f>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@2a916e9a>}
+
+(p/probe [:policy-ex1 :policy-ex2 :policy-ex3])
+=> true  ;;no state being passed to :console ! lets set it to :first and at least get one
+
+(p/swap-sink-policy! :console :first)
+=> {:policy-fn #<core$policy_first probe.core$policy_first@586f0f11>, :name :console, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@4dc834d6>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@1304f57f>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@2a916e9a>}
+
+(p/probe [:policy-ex1 :policy-ex2 :policy-ex3])
+=>true
+{:ts #inst "2014-04-06T23:27:46.080-00:00", :thread-id 150, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
+```
+
 
 
 Other implemented features we'll document soon:
@@ -381,8 +441,8 @@ Here are some opportunities to improve the library.
      handle (or do we) deduplication particularly when subscription channels
      may transform the data invalidating an = comparison?~~
      state is dropped onto an async routing channel where all trasforms,
-     filters, and sampling fns are evaluated, deduplicated, and then passed
-     to the appropriate subscribers channels and ultimately the subscribers sink.
+     filters, and sampling fns are evaluated, deduplicated (if applicable), and then
+     passed to the appropriate subscribers channels and ultimately the subscribers sink.
 * Complex topologies.  Right now we have a single transforming channel between
      a selector and a sink.  What if we wanted to share functionality across
      streams?  How would we specify, wire up, and control a more complex topology?
