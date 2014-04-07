@@ -278,7 +278,8 @@ user> (p/add-sink :example sink/console-raw) ;add sink
 
 (p/probe [:transform-example])
 => true
-{:foo "bar", :ts #inst "2014-04-06T23:39:43.206-00:00", :thread-id 157, :ns user, :tags #{:transform-example :ns/user}, :line 1} ;:foo "bar" has been added to the state map
+{:foo "bar", :ts #inst "2014-04-06T23:39:43.206-00:00", :thread-id 157, :ns user, :tags #{:transform-example :ns/user}, :line 1}
+;:foo "bar" has been added to the state map passed to the sink
 ```
 
 We can use the provided helper function to create a sample function if we only want a
@@ -305,7 +306,8 @@ fraction of state maps sent to the sink.
 =>true
 (p/probe [:sample-tag])
 =>true
-{:ts #inst "2014-04-06T23:45:09.109-00:00", :thread-id 165, :ns user, :tags #{:ns/user :sample-tag}, :line 1} ;Every third state map, as expected.
+{:ts #inst "2014-04-06T23:45:09.109-00:00", :thread-id 165, :ns user, :tags #{:ns/user :sample-tag}, :line 1}
+;Every third state map, as expected.
 ```
 
 
@@ -356,7 +358,7 @@ Now we have three subscribers all writing to the same sink.
 {:ts #inst "2014-04-06T23:05:25.124-00:00", :thread-id 125, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
 {:assoced "value", :ts #inst "2014-04-06T23:05:25.124-00:00", :thread-id 125, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
 ```
-As expected all the state maps from our subscribers were passed through to the sink.
+As expected, all the state maps from our subscribers were passed through to the sink.
 Lets change `:console` to unique.
 
 ```clojure
@@ -369,17 +371,17 @@ Lets change `:console` to unique.
 {:assoced "value", :ts #inst "2014-04-06T23:14:51.133-00:00", :thread-id 136, :ns user, :tags #{:policy-ex1 :policy-ex2 :policy-ex3 :ns/user}, :line 1}
 ```
 
-This time we only got two results.  The sink policy removed one of the two identical state
-maps.
+This time we only received two results.  The sink policy removed one of the two identical
+state maps.
 
-You can also set sink policy at sink creation
+We can also set sink policy at sink creation
 
 ```clojure
 (p/add-sink :new-console sink/console-raw :policy :unique)
 =>{:name :new-console, :function #<sink$console_raw probe.sink$console_raw@47f3ed7f>, :in #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@2191fa12>, :mix #<async$mix$reify__4555 clojure.core.async$mix$reify__4555@76b8c4f5>, :out #<ManyToManyChannel clojure.core.async.impl.channels.ManyToManyChannel@5c8aedb7>, :policy-fn #<core$policy_unique probe.core$policy_unique@484c3f0b>}
 ```
 
-Lets create our own policy and pass it. Lets just create an easy function to stop any
+Lets create our own policy and pass it. Lets create an easy function to stop any
 state maps from reaching the sink by just passing back an empty list.
 
 ```clojure
