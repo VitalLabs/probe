@@ -175,7 +175,33 @@
     (probe [:test1 :test2])
     (Thread/sleep 20)
     (count @history1)
-    => 1))
+    => 1)
+
+  (fact "policy none enforced"
+    (reset! history1 nil)
+    (add-sink :history1  history-sink1 :policy :none :force? true)
+    (subscribe #{:test1} :history1)
+    (subscribe #{:test2} :history1)
+    (probe [:test1 :test2])
+    (Thread/sleep 20)
+    (count @history1)
+    => 0)
+
+  (fact "policy none leaves other sinks unaffected"
+    (let [mem (sink/make-memory)]
+      (rem-sink :memory)
+      (add-sink :memory (sink/memory-sink mem))
+      (reset! history1 nil)
+      (add-sink :history1  history-sink1 :policy :none :force? true)
+      (subscribe #{:test1} :history1)
+      (subscribe #{:test2} :memory)
+      (probe [:test1 :test2])
+      (Thread/sleep 20)
+      (count @mem)
+      => 1))
+  (fact "Proper sink shut off"
+    (count @history1)
+    => 0))
 
 
 ;;TODO come up with a better way to test this
@@ -207,7 +233,41 @@
     (probe [:test])
     (Thread/sleep 20)
     (count @history1)
+    => 1)
+
+  (fact "mk-filter-transform works as expected"
+    (reset! history1 nil)
+    (add-sink :history1 history-sink1 :force? true)
+    (subscribe #{:test}
+               :history1
+               :transform (mk-filter-transform #(= (:value %) 42)))
+    (probe [:test])
+    (probe [:test] :value 42)
+    (Thread/sleep 20)
+    (:value (first @history1))
+    => 42)
+
+  (fact "mk-filter-transform filters"
+    (count @history1)
+    => 1)
+
+  (fact "mk-remove-transform works as expected"
+    (reset! history1 nil)
+    (add-sink :history1 history-sink1 :force? true)
+    (subscribe #{:test}
+               :history1
+               :transform (mk-remove-transform #(not= (:value %) 42)))
+    (probe [:test])
+    (probe [:test] :value 42)
+    (Thread/sleep 20)
+    (:value (first @history1))
+    => 42)
+
+  (fact "mk-remove-transform removes"
+    (count @history1)
     => 1))
+
+
 
 (future-facts "probe state")
 (future-facts "probe fns")

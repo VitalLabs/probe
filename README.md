@@ -282,8 +282,7 @@ user> (p/add-sink :example sink/console-raw) ;add sink
 ;:foo "bar" has been added to the state map passed to the sink
 ```
 
-We can use the provided helper function to create a sample function if we only want a
-fraction of state maps sent to the sink.
+We can use one of the provided helper function to create a sample function if we only want a fraction of state maps sent to the sink.
 
 ```clojure
 (p/add-sink :sample-example sink/console-raw) ;add a new sink
@@ -311,16 +310,19 @@ fraction of state maps sent to the sink.
 ```
 
 
+
+
 ### Data de-duplication policy
 
 It is possible for multiple subscribers to send the same state map to the same sink,
 resulting in duplicates.  By default all state maps are passed to a given sink, however
-we can set a policy on the sink if we want to alter that behavior.  Three ready made
+we can set a policy on the sink if we want to alter that behavior.  Four ready made
 policies exist and are as follows:
 
  * `:all` -- default policy setting.  All state maps passed.
  * `:unique` -- A copy of each distinct state map is passed to the sink.
  * `:first` -- the first non nil state map found is passed to the sink.
+ * `:none` -- no state passed.  This also prevents any subscription transforms from executing for subscriptions to the sink.
 
 You can optionally create your own policy function, provided that it returns a list
 of maps of the form `{:sub <subscriber> :new-state <state after (:transform sub) is applied>}` and takes two args, state (map) and subscribers (seq of subscribers).

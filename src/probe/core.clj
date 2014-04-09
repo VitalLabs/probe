@@ -151,11 +151,19 @@
       (dissoc nil)
       (vals)))))
 
+(defn policy-none
+  "Returns an empty list, short circuiting any
+   further processing of state by passing an
+   empty list"
+  [_ _]
+  '())
+
 ;;Map of provided sink policy fns
 (def sink-policies
   {:all policy-all
    :first policy-first
-   :unique policy-unique})
+   :unique policy-unique
+   :none policy-none})
 
 (defn parse-sink-policy
   [policy]
@@ -300,6 +308,17 @@
   {:pre [(number? freq)]}
   (sampler-fn freq))
 
+(defn mk-filter-transform
+  [filter-fn]
+  {:pre [(fn? filter-fn)]}
+  (fn [state]
+    (if (filter-fn state) state nil)))
+
+(defn mk-remove-transform
+  [remove-fn]
+  {:pre [(fn? remove-fn)]}
+  (fn [state]
+    (if (remove-fn state) nil state)))
 
 
 ;; =============================================
