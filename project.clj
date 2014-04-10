@@ -12,10 +12,7 @@
                   :exclusions [org.slf4j/slf4j-api]]
                  [org.slf4j/jul-to-slf4j "1.7.2"]
                  [org.slf4j/jcl-over-slf4j "1.7.2"]
-                 [org.slf4j/log4j-over-slf4j "1.7.2"]
-                 ;; Testing
-                 [midje "1.6.3"]]
+                 [org.slf4j/log4j-over-slf4j "1.7.2"]]
+  :profiles {:dev {:dependencies [;; Testing
+                                  [midje "1.6.3"]]}}
   :plugins [[lein-midje "3.0.0"]])
-                 
-
-

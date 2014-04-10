@@ -37,7 +37,7 @@ supporting the Pedestal-style structured logging interface.
 
 How about monitoring probe state across a distributed application?
 Rather than using Scribe or Splunk to aggregate and parse text
-strings, fire up [Reimann](http://reimann.io) and pipe probe state to
+strings, fire up [Riemann](http://riemann.io) and pipe probe state to
 it or use a scalable data store like HBase, MongoDB, Cassandra, or
 DynamoDB where historical probes can be indexed and analyzed as
 needed?  Cassandra is especially nice as you can have it automatically
@@ -111,6 +111,7 @@ Reserved tags:
 - Standard logging levels: :trace, :debug, :info, :warn, :error
 
 ## Documentation by Example
+
 
 ```clojure
 (require '[probe.core :as p])
@@ -190,6 +191,7 @@ Let's explore some other probing conveniences.  For example, good
 functional code comes pre-packaged with some wonderful probe points
 called functions.
 
+
 ```clojure
 (defn testprobe [a b]
  (+ a b))
@@ -209,6 +211,7 @@ called functions.
 We can now magically trace input arguments and return values for every
 expression.  How about just focusing on the input/outputs?  We can use
 some channel builders from the probe.core package to make this more concise.
+
 
 ```clojure
 (defn args-and-value [state] (select-keys state [:args :value :fname]))
@@ -437,7 +440,7 @@ Here are some opportunities to improve the library.
 * Add higher level targeted function tracing / collection facilities
   (e.g. trace 100 input/result vectors from function f or namespace ns)
 * Add metadata so we can inspect what functions are probed
-* Add a Reimann sink as probe.reimann usin the Reimann clojure client
+* Add a Riemann sink as probe.riemann usin the Riemann clojure client
 
 ### Major Tasks
 
