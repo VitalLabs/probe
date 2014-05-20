@@ -30,8 +30,6 @@
       (update-in state [key] inc)
       state)))
 
-(defn incrementing-channel [key]
-  (map> (incrementer-fn key)))
 
 (facts "subscriptions"
   (unsubscribe-all)
@@ -51,12 +49,12 @@
 (facts "routing"
   (unsubscribe-all)
   (reset! history1 nil)
-  (add-sink :history1 history-sink1 true)
-  (subscribe #{:test} :history1 (incrementing-channel :count))
+  (add-sink :history1 history-sink1 :force? true)
+  (subscribe #{:test} :history1 :transform (incrementer-fn :count))
 ;;  (add-sink :printer println)
 ;;  (subscribe #{:test} (incrementing-channel :count) :printer)
   (write-state {:tags #{:test} :foo :bar})
-  (Thread/sleep 15)
+  (Thread/sleep 100)
   (facts "sends state to sink" (first @history1) => {:tags #{:test} :foo :bar})
   (write-state {:tags #{:test} :count 1})
   (facts "transforms are applied" (first @history1) => {:tags #{:test} :count 2})
@@ -68,7 +66,7 @@
   (write-state {:tags #{:test} :count 1 :foo {:test 1 :testing 2}})
   (facts "nested structures are ok"
          (first @history1) => {:tags #{:test} :count 2 :foo {:test 1 :testing 2}})
-  (add-sink :history1 history-sink1 true)
+  (add-sink :history1 history-sink1 :force? true)
   (write-state {:tags #{:test} :count 1})
   (facts "updating sinks re-establish existing subscriptions"
          (first @history1) => {:tags #{:test} :count 2})
@@ -123,15 +121,15 @@
   (capture-bindings! nil)
   (unsubscribe-all)
   (reset! history1 nil)
-  (add-sink :history1 history-sink1 true)
-  (subscribe #{:test} :history1 (incrementing-channel :count))
-  
+  (add-sink :history1 history-sink1 :force? true)
+  (subscribe #{:test} :history1 :transform (incrementer-fn :count))
+
   (fact "are not captured by default"
     (probe #{:test} :count 1)
     (Thread/sleep 20)
     (select-keys (first @history1) [:tags :count :bindings])
     => {:tags #{:test :ns/probe :ns/probe.core-test} :count 2})
-  
+
   (fact "can be captured"
     (capture-bindings! `[probe.core-test/my-bindings])
     (probe #{:test} :count 1)
@@ -139,7 +137,7 @@
     (select-keys (first @history1) [:tags :count :bindings])
     => {:tags #{:test :ns/probe :ns/probe.core-test} :count 2
         :bindings {'probe.core-test/my-bindings {:foo :bar}}})
-  
+
   (fact "capture can be inhibited"
     (without-bindings (probe #{:test} :count 1))
     (Thread/sleep 20)
@@ -147,8 +145,130 @@
     => {:tags #{:test :ns/probe :ns/probe.core-test} :count 2})
   (capture-bindings! nil))
 
+(facts "sink policies enforced"
+  (fact "policy all enforced"
+    (reset! history1 nil)
+    (add-sink :history1  history-sink1 :policy :all :force? true)
+    (subscribe #{:test1} :history1)
+    (subscribe #{:test2} :history1)
+    (probe [:test1 :test2])
+    (Thread/sleep 20)
+    (count @history1)
+    => 2)
+
+  (fact "policy unique enforced"
+    (reset! history1 nil)
+    (add-sink :history1  history-sink1 :policy :unique :force? true)
+    (subscribe #{:test1} :history1 :transform #(assoc % :new "value"))
+    (subscribe #{:test2} :history1)
+    (subscribe #{:test3} :history1)
+    (probe [:test1 :test2 :test3])
+    (Thread/sleep 20)
+    (count @history1)
+    => 2)
+
+  (fact "policy first enforced"
+    (reset! history1 nil)
+    (add-sink :history1  history-sink1 :policy :first :force? true)
+    (subscribe #{:test1} :history1)
+    (subscribe #{:test2} :history1)
+    (probe [:test1 :test2])
+    (Thread/sleep 20)
+    (count @history1)
+    => 1)
+
+  (fact "policy none enforced"
+    (reset! history1 nil)
+    (add-sink :history1  history-sink1 :policy :none :force? true)
+    (subscribe #{:test1} :history1)
+    (subscribe #{:test2} :history1)
+    (probe [:test1 :test2])
+    (Thread/sleep 20)
+    (count @history1)
+    => 0)
+
+  (fact "policy none leaves other sinks unaffected"
+    (let [mem (sink/make-memory)]
+      (rem-sink :memory)
+      (add-sink :memory (sink/memory-sink mem))
+      (reset! history1 nil)
+      (add-sink :history1  history-sink1 :policy :none :force? true)
+      (subscribe #{:test1} :history1)
+      (subscribe #{:test2} :memory)
+      (probe [:test1 :test2])
+      (Thread/sleep 20)
+      (count @mem)
+      => 1))
+  (fact "Proper sink shut off"
+    (count @history1)
+    => 0))
+
+
+;;TODO come up with a better way to test this
+(facts "swap-sink-policy! works as intended"
+  (fact "policy defaults to all"
+    (reset! history1 nil)
+    (add-sink :history1 history-sink1 :force? true)
+    (subscribe #{:test1} :history1)
+    (subscribe #{:test2} :history1)
+    (probe [:test1 :test2])
+    (Thread/sleep 20)
+    (count @history1)
+    => 2)
+
+  (fact "policy swapped"
+    (swap-sink-policy! :history1 :unique)
+    (probe [:test1 :test2])
+    (Thread/sleep 20)
+    (count @history1)
+    => 3))
+
+(facts "Test Transform Helpers"
+  (fact "mk-sample-transform works as expected"
+    (reset! history1 nil)
+    (add-sink :history1 history-sink1 :force? true)
+    (subscribe #{:test} :history1 :transform (mk-sample-transform 3))
+    (probe [:test])
+    (probe [:test])
+    (probe [:test])
+    (Thread/sleep 20)
+    (count @history1)
+    => 1)
+
+  (fact "mk-filter-transform works as expected"
+    (reset! history1 nil)
+    (add-sink :history1 history-sink1 :force? true)
+    (subscribe #{:test}
+               :history1
+               :transform (mk-filter-transform #(= (:value %) 42)))
+    (probe [:test])
+    (probe [:test] :value 42)
+    (Thread/sleep 20)
+    (:value (first @history1))
+    => 42)
+
+  (fact "mk-filter-transform filters"
+    (count @history1)
+    => 1)
+
+  (fact "mk-remove-transform works as expected"
+    (reset! history1 nil)
+    (add-sink :history1 history-sink1 :force? true)
+    (subscribe #{:test}
+               :history1
+               :transform (mk-remove-transform #(not= (:value %) 42)))
+    (probe [:test])
+    (probe [:test] :value 42)
+    (Thread/sleep 20)
+    (:value (first @history1))
+    => 42)
+
+  (fact "mk-remove-transform removes"
+    (count @history1)
+    => 1))
+
+
+
 (future-facts "probe state")
 (future-facts "probe fns")
 (future-facts "probe namespace")
-       
-       

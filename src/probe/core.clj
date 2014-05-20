@@ -28,6 +28,9 @@
        (clog/error "Probe error detected" state exception)
        (recur)))))
 
+
+
+
 ;;
 ;; ## Sinks
 ;;
@@ -49,7 +52,8 @@
 (defn get-sink [name]
   (@sinks name))
 
-(declare unsubscribe sink-subscriptions link-to-sink unlink-from-sink)
+(declare unsubscribe sink-subscriptions link-to-sink
+         unlink-from-sink parse-sink-policy)
 
 (defn rem-sink
   "Remove a sink and all subscriptions"
@@ -67,7 +71,7 @@
 
 (defn add-sink
   "Create a named sink function for probe state"
-  ([name f force?]
+  ([name f & {:keys [force? policy]}]
      {:pre [(keyword? name)]}
      (let [prior (get-sink name)]
        (when prior
@@ -78,24 +82,104 @@
      (let [c (chan)
            mix (async/mix c)
            out (sink-processor f c)
+           policy-fn (parse-sink-policy policy)
            sink {:name name
                  :function f
                  :in c
                  :mix mix
-                 :out out}]
+                 :out out
+                 :policy-fn policy-fn}]
        (swap! sinks assoc name sink)
        (when force?
          (map (fn [sub] (link-to-sink sub))
               (sink-subscriptions name)))
-       sink))
-  ([name f]
-     (add-sink name f false)))
+       sink)))
 
-       
+(defn swap-sink-policy!
+  "Change the duplication policy on an existing sink"
+  [name policy]
+  {:pre [(keyword? name) (or (keyword? policy) (fn? policy))]}
+  (if-let [prior (get-sink name)]
+    (let [policy-fn (parse-sink-policy policy)
+          with-policy (assoc prior :policy-fn policy-fn)]
+      (swap! sinks #(assoc % name with-policy))
+      with-policy)
+    (throw (ex-info (str "No sink configured for name " name) {:sink name}))))
+
+
+;;
+;; sink data de-duplication Policy Helpers
+;; ---------------------------------------
+
+
+(defn mk-state-sub-map
+  [state subscribers]
+  (map #(hash-map :sub % :new-state ((:transform %) state)) subscribers))
+
+(defn policy-unique
+  "Deduplicates transformed states. returns
+   a seq of maps of :sub (subscriber ) and
+   :new-state (state transformed by (:transform sub))"
+  [state subscribers]
+  (let [state-sub-map (mk-state-sub-map state subscribers)]
+    (map first
+         (->
+          (group-by :new-state state-sub-map)
+          (dissoc nil)
+          (vals)))))
+
+(defn policy-first
+  "Grabs the first subscriber passed to a sink,
+   applies transform and returns only that state"
+  [state subscribers]
+  (let [state-sub-map (mk-state-sub-map state subscribers)]
+    (if-let [s (ffirst
+                (->
+                 (group-by :new-state state-sub-map)
+                 (dissoc nil)
+                 (vals)))]
+      (vector s)
+      (vector))))
+
+(defn policy-all
+  "Applies transform to state for all subscribers"
+  [state subscribers]
+  (let [state-sub-map (mk-state-sub-map state subscribers)]
+    (reduce concat
+     (->
+      (group-by :new-state state-sub-map)
+      (dissoc nil)
+      (vals)))))
+
+(defn policy-none
+  "Returns an empty list, short circuiting any
+   further processing of state by passing an
+   empty list"
+  [_ _]
+  '())
+
+;;Map of provided sink policy fns
+(def sink-policies
+  {:all policy-all
+   :first policy-first
+   :unique policy-unique
+   :none policy-none})
+
+(defn parse-sink-policy
+  [policy]
+  (cond
+   (fn? policy) policy
+   (keyword? policy) (or
+                      (get sink-policies policy)
+                      (throw (ex-info (str "No policy of name: " policy) {})))
+   :else (:all sink-policies)))
+
+
+
 ;;
 ;; ## Subscriptions
 ;;
-       
+
 (defonce ^:private subscription-table (atom {}))
 
 (defn subscriptions []
@@ -133,21 +217,22 @@
     (async/unmix (:mix sink) (:channel subscription))))
 
 (defn subscribe
-  ([selector sink-name channel]
+  ([selector sink-name & {:keys [transform]}]
      {:pre [(set? selector) (keyword? sink-name)]}
      (let [existing (get-subscription selector sink-name)
+           ;transform-fn (mk-transform-fn transform filter sample-freq)
            subscription {:selector (set selector)
-                         :channel channel
+                         :channel (chan)
                          :sink sink-name
-                         :name selector}]
+                         :name selector
+                         :transform (or transform identity)}]
        (when existing
          (unsubscribe selector sink-name))
        (link-to-sink subscription)
        (swap! subscription-table assoc [selector sink-name] subscription)
        (memo/memo-clear! subscribers)
-       subscription))
-  ([selector sink-name]
-     (subscribe selector sink-name (chan))))
+       subscription)))
+
 
 (defn unsubscribe
   ([selector sink-name]
@@ -160,7 +245,7 @@
        (swap! subscription-table dissoc [selector sink-name])
        (memo/memo-clear! subscribers)
        nil)))
-  
+
 (defn unsubscribe-all []
   (doall
    (map (fn [[sel sink]]
@@ -171,7 +256,7 @@
 ;;
 ;; ## Router
 ;;
-               
+
 (defonce input (chan))
 
 (defn write-state
@@ -179,59 +264,61 @@
   [state]
   (>!! input state))
 
-(def router-handler 
+(defn- apply-sink-policy
+  "Map dedup-states to each sink, preventing
+   us from sending multiple copies of the same
+   state to each sink"
+  [tags state]
+  (let [subs (subscribers tags)]
+    (mapcat
+     #((:policy-fn (get-sink (first %))) state (second %))
+     (group-by :sink subs))))
+
+(def router-handler
   (go-loop []
     (let [state (<! input)]
       (clog/trace "Routing probe state: " state)
       (when-let [tags (and (map? state) (:tags state))]
         (when (coll? tags)
-          (doseq [sub (subscribers tags)]
+          (doseq [sub (apply-sink-policy tags state)]
             (try
-              (clog/trace "Writing channel for: " [(:name sub) (:sink sub)])
-              (>! (:channel sub) state)
+              (clog/trace "Writing channel for: " [(:name (:sub sub))
+                                                   (:sink (:sub sub))])
+              (>! (:channel (:sub sub)) (:new-state sub))
               (catch java.lang.Throwable t
                 (>! error-channel {:state ~state :exception t}))))))
       (recur))))
 
 ;; ==================================
-;; Channel Transform Helpers
+;; Transform Helpers
 ;; ==================================
 
-(defn filter>
-  "Return a channel that applies a filter and
-   if predict is truthy, passes the value to
-   the destination channel or if one is not
-   provided, a generic channel."
-  ([f c]
-     (async/filter> f c))
-  ([f]
-     (filter> f (async/chan))))
-
-(defn map>
-  ([f c]
-     (async/map> f c))
-  ([f]
-     (map> f (async/chan))))
-
-(defn remove>
-  ([f c]
-     (async/remove> f c))
-  ([f]
-     (remove> f (async/chan))))
 
 (defn- sampler-fn [max]
-  (let [count (atom 0)]
-    (fn [_]
-      (if (> @count max)
-        (do (reset! count 0) true)
-        (do (swap! count inc) false)))))
+  "Creates function that returns state once
+   every max calls"
+  (let [count (atom 1)]
+    (fn [state]
+      (if (>= @count max)
+        (do (reset! count 1) state)
+        (do (swap! count inc) nil)))))
 
-(defn sample>
-  ([freq c]
-     {:pre [(float? freq)]}
-     (map> (sampler-fn (int (/ 1 freq))) c))
-  ([freq]
-     (sample> freq (async/chan))))
+(defn mk-sample-transform
+  [freq]
+  {:pre [(number? freq)]}
+  (sampler-fn freq))
+
+(defn mk-filter-transform
+  [filter-fn]
+  {:pre [(fn? filter-fn)]}
+  (fn [state]
+    (if (filter-fn state) state nil)))
+
+(defn mk-remove-transform
+  [remove-fn]
+  {:pre [(fn? remove-fn)]}
+  (fn [state]
+    (if (remove-fn state) nil state)))
 
 
 ;; =============================================
@@ -346,7 +433,7 @@
 
 (defn- state? [ref]
   (let [type (type ref)]
-    (or (= clojure.lang.Var type)    
+    (or (= clojure.lang.Var type)
         (= clojure.lang.Ref type)
         (= clojure.lang.Atom type)
         (= clojure.lang.Agent type))))
@@ -371,7 +458,7 @@
         :default
         (throw (ex-info "Do not know how to probe provided reference"
                         {:ref ref :type (type ref)}))))
-             
+
 
 (defn probe-state!
   "Add a probe function to a state element or symbol
@@ -387,7 +474,7 @@
   (let [stateval (resolve-ref ref)]
     (remove-watch stateval ::probe)))
 
-    
+
 ;;
 ;; Function probes
 ;; -----------------------------------------
@@ -460,4 +547,3 @@
   (probe-var-fns (keys (ns-interns ns))))
 (defn unprobe-ns-all! [ns]
   (unprobe-var-fns (keys (ns-interns ns))))
-
