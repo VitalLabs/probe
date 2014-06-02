@@ -115,7 +115,7 @@ Reserved tags:
 
 ```clojure
 (require '[probe.core :as p])
-(require '[probe.sink :as sink]
+(require '[probe.sink :as sink])
 (require '[core.async :as async])
 ```
 Start with a simple console sink
@@ -447,7 +447,7 @@ Here are some opportunities to improve the library.
 * ~~Deduplication.  It's easy to create multiple paths to the same sink; how do we
      handle (or do we) deduplication particularly when subscription channels
      may transform the data invalidating an = comparison?~~
-     state is dropped onto an async routing channel where all trasforms,
+     state is dropped onto an async routing channel where all transforms,
      filters, and sampling fns are evaluated, deduplicated (if applicable), and then
      passed to the appropriate subscribers channels and ultimately the subscribers sink.
 * Complex topologies.  Right now we have a single transforming channel between
