@@ -4,6 +4,7 @@ pom.xml
 /classes/
 /targets/
 /target/
+/src/playground/
 .lein-deps-sum
 .lein-failures
 *~
