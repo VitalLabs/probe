@@ -488,61 +488,66 @@
         enter-tags (set (concat [:probe/fn :probe/fn-enter] tags))
         exit-tags (set (concat [:probe/fn :probe/fn-exit] tags))]
     (fn [& args]
-      (do (probe* enter-tags (assoc static
-                               :args args))
-          (let [result (try (apply f args)
-                            (catch java.lang.Throwable e
-                              (probe* except-fn (assoc static
-                                                  :exception e
-                                                  :args args))
-                              (throw e)))]
-            (probe* exit-tags (assoc static
-                                :args args
-                                :value result))
-            result)))))
+      (do
+        (probe* enter-tags (assoc static :args args))
+        (let [result (try (apply f args)
+                       (catch java.lang.Throwable e
+                         (probe* except-fn (assoc static
+                                             :exception e
+                                             :args args))
+                         (throw e)))]
+          (probe* exit-tags (assoc static
+                              :args args
+                              :value result))
+          result)))))
 
 ;; Function probe API
 ;; --------------------------------------------
 
 (defn probe-fn!
-  ([tags fsym]
-     {:pre [(symbol? fsym)]}
-     (wrap/wrap-var-fn fsym (partial probe-fn-wrapper tags)))
-  ([fsym]
-     (probe-fn! [] fsym)))
+  ([fn-sym]
+   {:pre [(symbol? fn-sym)]}
+   (probe-fn! [] fn-sym))
+  ([tags fn-sym]
+   (wrap/wrap-var-fn fn-sym (partial probe-fn-wrapper tags))))
 
 (defn unprobe-fn!
-  ([tags fsym]
-     {:pre [(symbol? fsym)]}
-     (wrap/unwrap-var-fn fsym))
-  ([fsym]
-     (unprobe-fn! [] fsym)))
+  [fn-sym]
+  {:pre [(symbol? fn-sym)]}
+  (wrap/unwrap-var-fn fn-sym))
 
 ;; Namespace probe API
 ;; --------------------------------------------
 
-(defn- probe-var-fns
-  "Probe all function carrying vars"
-  [vars]
-  (doall
-   (->> vars
-        (filter (comp fn? var-get wrap/as-var))
-        (map probe-fn!))))
+(defn- make-symbol
+  [ns sym]
+  (symbol (name ns) (name sym)))
 
-(defn- unprobe-var-fns
-  "Unprobe all function carrying vars"
-  [vars]
-  (doall
-   (->> vars
-        (filter (comp fn? var-get wrap/as-var))
-        (map probe-fn!))))
+(defn- probe-var-fns*
+  ([f vars ns]
+   (doall
+    (map (fn [v]
+           (let [s (make-symbol ns v)]
+             (when (-> (wrap/as-var s) var-get fn?)
+               (f s))))
+         vars))))
 
-(defn probe-ns! [ns]
-  (probe-var-fns (keys (ns-publics ns))))
-(defn unprobe-ns! [ns]
-  (unprobe-var-fns (keys (ns-publics ns))))
+(defn probe-ns!
+  ([ns]
+   (probe-var-fns* probe-fn! (keys (ns-publics ns)) ns))
+  ([tags ns]
+   (probe-var-fns* (partial probe-fn! tags) (keys (ns-publics ns)) ns)))
 
-(defn probe-ns-all! [ns]
-  (probe-var-fns (keys (ns-interns ns))))
-(defn unprobe-ns-all! [ns]
-  (unprobe-var-fns (keys (ns-interns ns))))
+(defn unprobe-ns!
+  [ns]
+  (probe-var-fns* unprobe-fn! (keys (ns-publics ns)) ns))
+
+(defn probe-ns-all!
+  ([ns]
+   (probe-var-fns* probe-fn! (keys (ns-interns ns)) ns))
+  ([tags ns]
+   (probe-var-fns* (partial probe-fn! tags) (keys (ns-interns ns)) ns)))
+
+(defn unprobe-ns-all!
+  [ns]
+  (probe-var-fns* unprobe-fn! (keys (ns-interns ns)) ns))
