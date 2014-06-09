@@ -27,9 +27,6 @@
        (clog/error "Probe error detected" state exception)
        (recur))))
 
-
-
-
 ;;
 ;; ## Sinks
 ;;
@@ -516,38 +513,6 @@
   {:pre [(symbol? fn-sym)]}
   (wrap/unwrap-var-fn fn-sym))
 
-;; Namespace probe API
-;; --------------------------------------------
 
-(defn- make-symbol
-  [ns sym]
-  (symbol (name ns) (name sym)))
 
-(defn- probe-var-fns*
-  ([f vars ns]
-   (doall
-    (map (fn [v]
-           (let [s (make-symbol ns v)]
-             (when (-> (wrap/as-var s) var-get fn?)
-               (f s))))
-         vars))))
 
-(defn probe-ns!
-  ([ns]
-   (probe-var-fns* probe-fn! (keys (ns-publics ns)) ns))
-  ([tags ns]
-   (probe-var-fns* (partial probe-fn! tags) (keys (ns-publics ns)) ns)))
-
-(defn unprobe-ns!
-  [ns]
-  (probe-var-fns* unprobe-fn! (keys (ns-publics ns)) ns))
-
-(defn probe-ns-all!
-  ([ns]
-   (probe-var-fns* probe-fn! (keys (ns-interns ns)) ns))
-  ([tags ns]
-   (probe-var-fns* (partial probe-fn! tags) (keys (ns-interns ns)) ns)))
-
-(defn unprobe-ns-all!
-  [ns]
-  (probe-var-fns* unprobe-fn! (keys (ns-interns ns)) ns))

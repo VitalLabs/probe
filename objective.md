@@ -10,8 +10,22 @@ corresponding options, like:
 
 Config accepts the following:
 
++ **name** *[keyword, required]* Name used to:
+   + Subscribe sinks to
+   + Name generated functions
 + **namespace**: *[symbol, required]* Namespace to install probe-fns
 + **public**: *[bool, optional, true] *Install probe-fns on public functions?
 + **private**: *[bool, optional, false]* Install probe-fns on private functions?
-+ **tags**: *[set|vector, optional, []]* Additional tags to add to vars in this namespace
++ **tags**: *[set|vector, required]* Additional tags to add to vars in this namespace
 + **suppress-results?:** *[bool, optional, false]* Results from some functions are large. It can be useful to stamp them out.
++ **level**: *[integer, optional, 0]* priority level
+
+What actions do I want to be able to take?
+
++ Initialize all ns-probes
++ Toggle probing for a specific named ns
++ Get the status of probing for a specific named ns
+
+
+
+
