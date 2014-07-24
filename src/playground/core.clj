@@ -5,18 +5,18 @@
 
 ;; (p/add-sink :printer s/console-raw)
 
-(defprobes test-probes #{:printer}
-  ;; I want to return a function that, when called, probes this
-  ;; entire namespace according to the options
-  [:other   playground.other   #{:test} {:private true :suppress-results? true}]
-  [:another playground.another #{:test} {:public false :private true}]
-  )
+;; (defprobes test-probes #{:printer}
+;;   ;; I want to return a function that, when called, probes this
+;;   ;; entire namespace according to the options
+;;   [:other   playground.other   #{:test} {:private true :suppress-results? true}]
+;;   [:another playground.another #{:test} {:public false :private true}]
+;;   )
 
 ;; (p/ns-privates 'playground.another)
-(probe-another!)
-(unprobe-another!)
-(install-test-probes!)
-(uninstall-test-probes!)
+;; (probe-another!)
+;; (unprobe-another!)
+;; (install-test-probes!)
+;; (uninstall-test-probes!)
 
 (comment
 

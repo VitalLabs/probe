@@ -24,32 +24,6 @@
                (f s))))
          vars))))
 
-(defn- make-ns-pfns!
-  [sinks [subscribe ns-sym tags
-          {:keys [public private level suppress-results?]
-           :or   {public true, private false, level 0}}]]
-  (assert (not (every? false? [public private]))
-          (format "At least one of :public or :private must be true in definition for %s."
-                  subscribe))
-  (let [[pfn upfn] (cond
-                    (and public private) [p/probe-ns-all! p/unprobe-ns-all!]
-                    private              [p/probe-ns-private! p/unprobe-ns-private!]
-                    public               [p/probe-ns! p/unprobe-ns!])]
-    {:probe   `(do
-                 (require '~ns-sym) ;; ns must be loaded to probe it
-                 (~pfn ~(conj tags subscribe) '~ns-sym)
-                 (doseq [s# ~sinks]
-                   (p/subscribe #{~subscribe} s#
-                                :transform ~(if suppress-results?
-                                              `(fn [state#]
-                                                 (assoc state# :value :success))
-                                              `identity))))
-     :unprobe `(do
-                 (~upfn '~ns-sym)
-                 (doseq [s# ~sinks]
-                   (p/unsubscribe #{~subscribe} s#)))
-     :subscribe subscribe}))
-
 ;; ============================================================================
 ;; Namespace Probe API
 
@@ -82,6 +56,32 @@
 (defn unprobe-ns-all!
   [ns]
   (probe-var-fns* p/unprobe-fn! (keys (ns-interns ns)) ns))
+
+(defn- make-ns-pfns!
+  [sinks [subscribe ns-sym tags
+          {:keys [public private level suppress-results?]
+           :or   {public true, private false, level 0}}]]
+  (assert (not (every? false? [public private]))
+          (format "At least one of :public or :private must be true in definition for %s."
+                  subscribe))
+  (let [[pfn upfn] (cond
+                    (and public private) [probe-ns-all! unprobe-ns-all!]
+                    private              [probe-ns-private! unprobe-ns-private!]
+                    public               [probe-ns! unprobe-ns!])]
+    {:probe   `(do
+                 (require '~ns-sym) ;; ns must be loaded to probe it
+                 (~pfn ~(conj tags subscribe) '~ns-sym)
+                 (doseq [s# ~sinks]
+                   (p/subscribe #{~subscribe} s#
+                                :transform ~(if suppress-results?
+                                              `(fn [state#]
+                                                 (dissoc state# :value))
+                                              `identity))))
+     :unprobe `(do
+                 (~upfn '~ns-sym)
+                 (doseq [s# ~sinks]
+                   (p/unsubscribe #{~subscribe} s#)))
+     :subscribe subscribe}))
 
 (defmacro defprobes
   [name* sinks & probe-defs]

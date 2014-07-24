@@ -378,25 +378,25 @@
 (defn probe*
   "Probe the provided state in the current namespace using tags for dispatch"
   ([ns tags state]
-     (let [ntags (expand-namespace ns)
-           bindings (grab-bindings)
-           state (assoc state
-                   :tags (set (concat tags ntags))
-                   :ns (ns-name ns)
-                   :thread-id  (.getId (Thread/currentThread))
-                   :ts (java.util.Date.))
-           state (if (and bindings (not (empty? bindings)))
-                   (assoc state :bindings bindings)
-                   state)]
-       (write-state state)))
+   {:pre [(every? keyword? tags)]}
+   (let [ntags (expand-namespace ns)
+         bindings (grab-bindings)
+         state (assoc state
+                 :tags (set (concat tags ntags))
+                 :ns (ns-name ns)
+                 :thread-id  (.getId (Thread/currentThread))
+                 :ts (java.util.Date.))
+         state (if (and bindings (not (empty? bindings)))
+                 (assoc state :bindings bindings)
+                 state)]
+     (write-state state)))
   ([tags state]
-     (probe* (ns-name *ns*) tags state)))
+   (probe* (ns-name *ns*) tags state)))
 
 (defmacro probe
-  "Take a single map as first keyvals element, or an upacked
+  "Take a single map as first keyvals element, or an unpacked
    list of key and value pairs."
   [tags & keyvals]
-  {:pre [(every? keyword? tags)]}
   `(probe* (quote ~(ns-name *ns*))
            ~tags
            (assoc ~(if (= (count keyvals) 1)
