@@ -15,35 +15,37 @@
 (defn as-var [ref]
   (if (var? ref) ref (resolve ref)))
 
-(defn- rewrapper
-  "When the Var is updated, rewrap the function unless
-   you are setting a wrapped function again, then remove
-   yourself.  Makes assumptions about order of root setting
-   and notification, and may interact badly with other var
-   watchers"
-  [wrapper orig]
-  (fn [key v oldf f]
-    (remove-watch v :rewrap)
-    (if (= oldf f) ;; If setting a wrapped function again, clear
-      (alter-var-root v (fn [oldf] orig))
-      (do (alter-var-root v (fn [oldf] (wrapper v f)))
-          (add-watch v :rewrap (rewrapper wrapper f))))))
+(defn fq-sym
+  "Fully-qualified symbol."
+  [sym]
+  (if-let [ns (namespace sym)]
+    sym
+    (symbol (str *ns*) (name sym))))
+
+(def probed-originals (atom {}))
 
 (defn wrap-var-fn
   [fn-sym wrapper]
   (let [v (as-var fn-sym)
-        f (var-get v)]
+        f (var-get v)
+        fqs (fq-sym fn-sym)]
     (assert (fn? f))
-    (alter-var-root v (fn [old] (wrapper v f)))
-    (add-watch v :rewrap (rewrapper wrapper f))))
+    (if-let [orig (get @probed-originals fqs)]
+      ;; re-wrap the original definition.
+      (alter-var-root v (fn [_] (wrapper v orig)))
+      ;; Save the original definition, change the root.
+      (do
+        (swap! probed-originals assoc fqs f)
+        (alter-var-root v (fn [_] (wrapper v f)))))))
 
 (defn unwrap-var-fn
   "Revert to original (latest) function definition
    and remove tracking metadata. If unwrapped, ignores."
   [fn-sym]
   (let [v (as-var fn-sym)
-        f (var-get v)]
-    (when (and (fn? f) (find (.getWatches v) :rewrap))
-      (alter-var-root v (fn [old] old)))))
-      
-  
+        f (var-get v)
+        fqs (fq-sym fn-sym)]
+    (when (and (fn? f) (get @probed-originals fqs))
+      (alter-var-root v (fn [_] (get @probed-originals fqs))))))
+
+

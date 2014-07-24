@@ -22,14 +22,10 @@
 (defonce error-channel (chan))
 
 (defonce error-router
-  (go
-   (while true
-     (when-let [{:keys [state exception]} (<! error-channel)]
+  (go-loop []
+   (when-let [{:keys [state exception]} (<! error-channel)]
        (clog/error "Probe error detected" state exception)
-       (recur)))))
-
-
-
+       (recur))))
 
 ;;
 ;; ## Sinks
@@ -382,25 +378,25 @@
 (defn probe*
   "Probe the provided state in the current namespace using tags for dispatch"
   ([ns tags state]
-     (let [ntags (expand-namespace ns)
-           bindings (grab-bindings)
-           state (assoc state
-                   :tags (set (concat tags ntags))
-                   :ns (ns-name ns)
-                   :thread-id  (.getId (Thread/currentThread))
-                   :ts (java.util.Date.))
-           state (if (and bindings (not (empty? bindings)))
-                   (assoc state :bindings bindings)
-                   state)]
-       (write-state state)))
+   {:pre [(every? keyword? tags)]}
+   (let [ntags (expand-namespace ns)
+         bindings (grab-bindings)
+         state (assoc state
+                 :tags (set (concat tags ntags))
+                 :ns (ns-name ns)
+                 :thread-id  (.getId (Thread/currentThread))
+                 :ts (java.util.Date.))
+         state (if (and bindings (not (empty? bindings)))
+                 (assoc state :bindings bindings)
+                 state)]
+     (write-state state)))
   ([tags state]
-     (probe* (ns-name *ns*) tags state)))
+   (probe* (ns-name *ns*) tags state)))
 
 (defmacro probe
-  "Take a single map as first keyvals element, or an upacked
+  "Take a single map as first keyvals element, or an unpacked
    list of key and value pairs."
   [tags & keyvals]
-  {:pre [(every? keyword? tags)]}
   `(probe* (quote ~(ns-name *ns*))
            ~tags
            (assoc ~(if (= (count keyvals) 1)
@@ -489,61 +485,34 @@
         enter-tags (set (concat [:probe/fn :probe/fn-enter] tags))
         exit-tags (set (concat [:probe/fn :probe/fn-exit] tags))]
     (fn [& args]
-      (do (probe* enter-tags (assoc static
-                               :args args))
-          (let [result (try (apply f args)
-                            (catch java.lang.Throwable e
-                              (probe* except-fn (assoc static
-                                                  :exception e
-                                                  :args args))
-                              (throw e)))]
-            (probe* exit-tags (assoc static
-                                :args args
-                                :value result))
-            result)))))
+      (do
+        (probe* enter-tags (assoc static :args args))
+        (let [result (try (apply f args)
+                       (catch java.lang.Throwable e
+                         (probe* except-fn (assoc static
+                                             :exception e
+                                             :args args))
+                         (throw e)))]
+          (probe* exit-tags (assoc static
+                              :args args
+                              :value result))
+          result)))))
 
 ;; Function probe API
 ;; --------------------------------------------
 
 (defn probe-fn!
-  ([tags fsym]
-     {:pre [(symbol? fsym)]}
-     (wrap/wrap-var-fn fsym (partial probe-fn-wrapper tags)))
-  ([fsym]
-     (probe-fn! [] fsym)))
+  ([fn-sym]
+   {:pre [(symbol? fn-sym)]}
+   (probe-fn! [] fn-sym))
+  ([tags fn-sym]
+   (wrap/wrap-var-fn fn-sym (partial probe-fn-wrapper tags))))
 
 (defn unprobe-fn!
-  ([tags fsym]
-     {:pre [(symbol? fsym)]}
-     (wrap/unwrap-var-fn fsym))
-  ([fsym]
-     (unprobe-fn! [] fsym)))
+  [fn-sym]
+  {:pre [(symbol? fn-sym)]}
+  (wrap/unwrap-var-fn fn-sym))
 
-;; Namespace probe API
-;; --------------------------------------------
 
-(defn- probe-var-fns
-  "Probe all function carrying vars"
-  [vars]
-  (doall
-   (->> vars
-        (filter (comp fn? var-get wrap/as-var))
-        (map probe-fn!))))
 
-(defn- unprobe-var-fns
-  "Unprobe all function carrying vars"
-  [vars]
-  (doall
-   (->> vars
-        (filter (comp fn? var-get wrap/as-var))
-        (map probe-fn!))))
 
-(defn probe-ns! [ns]
-  (probe-var-fns (keys (ns-publics ns))))
-(defn unprobe-ns! [ns]
-  (unprobe-var-fns (keys (ns-publics ns))))
-
-(defn probe-ns-all! [ns]
-  (probe-var-fns (keys (ns-interns ns))))
-(defn unprobe-ns-all! [ns]
-  (unprobe-var-fns (keys (ns-interns ns))))

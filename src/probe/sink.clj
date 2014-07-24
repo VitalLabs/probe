@@ -31,6 +31,11 @@
   [state]
   (println (state->string state)))
 
+(defn console-pretty
+  "Print raw state to the console that looks pretty."
+  [state]
+  (clojure.pprint/pprint state))
+
 (defn console-log
   "A console sink that produces log-style formatted string"
   [state]
@@ -71,7 +76,7 @@
        :info (.info logger string exception)
        :debug (.debug logger string exception)
        :trace (.trace logger string exception))))
-  
+
 
 (defn log-sink
   "Use slf4j to log stringified state"
@@ -124,4 +129,4 @@
            (swap! atom conj state))))))
 
 
-     
+
