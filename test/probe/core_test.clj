@@ -10,6 +10,12 @@
   (clojure.tools.logging/trace "  History writer received: " state)
   (swap! history1 conj state))
 
+(def history2 (atom nil))
+
+(defn history-sink2 [state]
+  (clojure.tools.logging/trace "  History writer received: " state)
+  (reset! history2 state))
+
 (facts "sinks"
   (rem-sink :history1)
   (fact "can be created"
@@ -22,13 +28,6 @@
   (fact "can be removed"
     (:name (get-sink :history1))
     => nil?))
-
-(defn incrementer-fn [key]
-  (fn [state]
-    (clojure.tools.logging/trace "  Increment received state: " state)
-    (if (and (map? state) (state key))
-      (update-in state [key] inc)
-      state)))
 
 
 (facts "subscriptions"
@@ -45,38 +44,41 @@
   (fact "memoized lookup reset on unsubscribe"
         (get-subscription #{:test} :history1) => nil?))
 
+(defn incrementer-fn [key]
+  (fn [state]
+    (clojure.tools.logging/trace "  Increment received state: " state)
+    (if (and (map? state) (state key))
+      (update-in state [key] inc)
+      state)))
 
 (facts "routing"
   (unsubscribe-all)
-  (reset! history1 nil)
-  (add-sink :history1 history-sink1 :force? true)
-  (subscribe #{:test} :history1 :transform (incrementer-fn :count))
+  (add-sink :history2 history-sink2 :force? true)
+  (subscribe #{:test} :history2 :transform (incrementer-fn :count))
 ;  (add-sink :printer println)
 ;  (subscribe #{:test} :printer (incrementing-channel :count))
   (write-state {:tags #{:test} :foo :bar})
-  (Thread/sleep 1000)
-  (facts "sends state to sink" (first @history1) => {:tags #{:test} :foo :bar})
+  (Thread/sleep 100)
+  (facts "sends state to sink" @history2 => {:tags #{:test} :foo :bar})
   (write-state {:tags #{:test} :count 1})
-  (facts "transforms are applied" (first @history1) => {:tags #{:test} :count 2})
+  (facts "transforms are applied" @history2 => {:tags #{:test} :count 2})
   (write-state {:tags #{:test :foo :bar} :count 1})
   (facts "extra tags are ignored by selector"
-    (first @history1) => {:tags #{:test :foo :bar} :count 2})
+         @history2 => {:tags #{:test :foo :bar} :count 2})
   (write-state {:tags #{:test} :count 1 :foo :bar})
-  (facts "extra state is ok" (first @history1) => {:tags #{:test} :count 2 :foo :bar})
+  (facts "extra state is ok" @history2 => {:tags #{:test} :count 2 :foo :bar})
   (write-state {:tags #{:test} :count 1 :foo {:test 1 :testing 2}})
   (facts "nested structures are ok"
-         (first @history1) => {:tags #{:test} :count 2 :foo {:test 1 :testing 2}})
-  (add-sink :history1 history-sink1 :force? true)
+         @history2 => {:tags #{:test} :count 2 :foo {:test 1 :testing 2}})
+  (add-sink :history2 history-sink2 :force? true)
   (write-state {:tags #{:test} :count 1})
   (facts "updating sinks re-establish existing subscriptions"
-         (first @history1) => {:tags #{:test} :count 2})
-  (reset! history1 nil)
-  (subscribe #{:test} :history1)
+         @history2 => {:tags #{:test} :count 2})
+  (reset! history2 nil)
+  (subscribe #{:test} :history2)
   (write-state {:tags #{:test} :count 1})
   (facts "updating subscriptions re-establish connection"
-         (first @history1) => {:tags #{:test} :count 1})
-  (facts "no extra messages are sent"
-          (count @history1) => 1)
+         @history2 => {:tags #{:test} :count 1})
   (unsubscribe-all))
 
 (defn match-state [& {:as match}]
