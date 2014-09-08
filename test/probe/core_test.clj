@@ -61,22 +61,28 @@
   (Thread/sleep 100)
   (facts "sends state to sink" @history2 => {:tags #{:test} :foo :bar})
   (write-state {:tags #{:test} :count 1})
+  (Thread/sleep 100)
   (facts "transforms are applied" @history2 => {:tags #{:test} :count 2})
   (write-state {:tags #{:test :foo :bar} :count 1})
+  (Thread/sleep 100)
   (facts "extra tags are ignored by selector"
          @history2 => {:tags #{:test :foo :bar} :count 2})
   (write-state {:tags #{:test} :count 1 :foo :bar})
+  (Thread/sleep 100)
   (facts "extra state is ok" @history2 => {:tags #{:test} :count 2 :foo :bar})
   (write-state {:tags #{:test} :count 1 :foo {:test 1 :testing 2}})
+  (Thread/sleep 100)
   (facts "nested structures are ok"
          @history2 => {:tags #{:test} :count 2 :foo {:test 1 :testing 2}})
   (add-sink :history2 history-sink2 :force? true)
   (write-state {:tags #{:test} :count 1})
+  (Thread/sleep 100)
   (facts "updating sinks re-establish existing subscriptions"
          @history2 => {:tags #{:test} :count 2})
   (reset! history2 nil)
   (subscribe #{:test} :history2)
   (write-state {:tags #{:test} :count 1})
+  (Thread/sleep 100)
   (facts "updating subscriptions re-establish connection"
          @history2 => {:tags #{:test} :count 1})
   (unsubscribe-all))
