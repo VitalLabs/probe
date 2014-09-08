@@ -22,11 +22,9 @@
 (defonce error-channel (chan))
 
 (defonce error-router
-  (go
-   (while true
-     (when-let [{:keys [state exception]} (<! error-channel)]
-       (clog/error "Probe error detected" state exception)
-       (recur)))))
+  (go-loop []
+    (let [{:keys [state exception]} (<! error-channel)]
+      (clog/error "Probe error detected" state exception))))
 
 
 

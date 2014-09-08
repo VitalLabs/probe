@@ -56,7 +56,7 @@ accessible than Lamina, but YMMV.  The more the merrier!
 Add Probe to your lein project.clj :dependencies
 
 ```clojure
-[com.vitalreactor/probe "0.9.1"]
+[com.vitalreactor/probe "0.9.3"]
 ```
 
 And use it from your applications:
@@ -453,6 +453,8 @@ Here are some opportunities to improve the library.
 * Complex topologies.  Right now we have a single transforming channel between
      a selector and a sink.  What if we wanted to share functionality across
      streams?  How would we specify, wire up, and control a more complex topology?
+* Integrate Prismatic's Graph with Probe to generate topologies of filter 
+     operators for a richer core.async network?
 * Injest legacy logging messages - Most systems will have legacy libraries that
      use one of the Java logging systems.  Create some namespaces that
      allow for injecting these log messages into clj-probe middleware.  Ignore
