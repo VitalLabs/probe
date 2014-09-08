@@ -1,4 +1,4 @@
-(defproject com.vitalreactor/probe "0.9.3"
+(defproject com.vitalreactor/probe "0.9.4-SNAPSHOT"
   :description "A library for interacting with dynamic program state"
   :url "http://github.com/vitalreactor/probe"
   :license {:name "MIT License" :url "http://opensource.org/licenses/MIT"}

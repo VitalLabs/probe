@@ -54,7 +54,7 @@
 ;  (add-sink :printer println)
 ;  (subscribe #{:test} :printer (incrementing-channel :count))
   (write-state {:tags #{:test} :foo :bar})
-  (Thread/sleep 100)
+  (Thread/sleep 1000)
   (facts "sends state to sink" (first @history1) => {:tags #{:test} :foo :bar})
   (write-state {:tags #{:test} :count 1})
   (facts "transforms are applied" (first @history1) => {:tags #{:test} :count 2})
