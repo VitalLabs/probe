@@ -157,7 +157,7 @@
   '())
 
 ;;Map of provided sink policy fns
-(def sink-policies
+(defonce sink-policies
   {:all policy-all
    :first policy-first
    :unique policy-unique
@@ -199,7 +199,7 @@
     (filter #(set/subset? (:selector %) probe-tags)
             (vals @subscription-table))))
 
-(def subscribers (memo/memo subscribers*))
+(defonce subscribers (memo/memo subscribers*))
 
 (defn subscribers? [tags]
   (not (empty? (subscribers tags))))
@@ -272,7 +272,7 @@
      #((:policy-fn (get-sink (first %))) state (second %))
      (group-by :sink subs))))
 
-(def router-handler
+(defonce router-handler
   (go-loop []
     (let [state (<! input)]
       (clog/trace "Routing probe state: " state)
