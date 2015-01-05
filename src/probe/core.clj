@@ -274,7 +274,7 @@
      #((:policy-fn (get-sink (first %))) state (second %))
      (group-by :sink subs))))
 
-(def router-handler
+(defonce router-handler
   (go-loop []
 ;    (clog/trace "Waiting for probe state")
     (let [state (<! input)]
@@ -291,7 +291,7 @@
 ;                       (clog/trace "Caught an error")
                        (>! error-channel {:state (str state) :exception t})))))))
         (catch java.lang.Throwable t
-          (>! error-channel {:msg "Bad Probe data received, caused exception" :exception t))))
+          (>! error-channel {:msg "Bad Probe data received, caused exception" :exception t})))
 ;    (clog/trace "Waiting to recur")
       (recur))))
 
