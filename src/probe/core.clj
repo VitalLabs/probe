@@ -23,11 +23,15 @@
 
 (defonce error-router
   (go-loop []
-    (let [{:keys [msg state exception]} (<! error-channel)]
+    (let [{:keys [msg state exception]}
+          (try (<! error-channel)
+               (catch java.lang.Throwable t
+                 (.printStackTrace t)
+                 (clog/error "Probe error detected taking from error channel")))]
       (try
         (clog/error (or msg "Probe error detected") state exception)
         (catch java.lang.Throwable t
-          (clog/error "Probe error detected" exception "unable to report state content" t)))
+          (clog/error "Probe error detected unable to report state content and exception" (str t))))
       (recur))))
 
 ;;
@@ -277,7 +281,10 @@
 (defonce router-handler
   (go-loop []
 ;    (clog/trace "Waiting for probe state")
-    (let [state (<! input)]
+    (let [state (try (<! input)
+                     (catch java.lang.Throwable t
+                       (clog/error "Problem taking from router input!")
+                       {:tags #{}}))]
 ;      (clog/trace "Routing probe state: " state)
       (try
         (when-let [tags (and (map? state) (:tags state))]
