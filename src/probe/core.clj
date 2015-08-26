@@ -520,14 +520,14 @@
 
 (defn probe-fn!
   ([tags fsym]
-     {:pre [(symbol? fsym)]}
+     {:pre [(or (symbol? fsym) (var? fsym))]}
      (wrap/wrap-var-fn fsym (partial probe-fn-wrapper tags)))
   ([fsym]
      (probe-fn! [] fsym)))
 
 (defn unprobe-fn!
   ([tags fsym]
-     {:pre [(symbol? fsym)]}
+     {:pre [(or (symbol? fsym) (var? fsym))]}
      (wrap/unwrap-var-fn fsym))
   ([fsym]
      (unprobe-fn! [] fsym)))
@@ -540,7 +540,7 @@
   [vars]
   (doall
    (->> vars
-        (filter (comp fn? var-get wrap/as-var))
+        (filter (comp fn? var-get))
         (map probe-fn!))))
 
 (defn- unprobe-var-fns
@@ -548,15 +548,15 @@
   [vars]
   (doall
    (->> vars
-        (filter (comp fn? var-get wrap/as-var))
+        (filter (comp fn? var-get))
         (map probe-fn!))))
 
 (defn probe-ns! [ns]
-  (probe-var-fns (keys (ns-publics ns))))
+  (probe-var-fns (vals (ns-publics ns))))
 (defn unprobe-ns! [ns]
-  (unprobe-var-fns (keys (ns-publics ns))))
+  (unprobe-var-fns (vals (ns-publics ns))))
 
 (defn probe-ns-all! [ns]
-  (probe-var-fns (keys (ns-interns ns))))
+  (probe-var-fns (vals (ns-interns ns))))
 (defn unprobe-ns-all! [ns]
-  (unprobe-var-fns (keys (ns-interns ns))))
+  (unprobe-var-fns (vals (ns-interns ns))))

@@ -344,7 +344,7 @@
     (fact "all functions in ns are instrumented"
       (map :fname (sink/scan-memory mem)) => ['foo 'bar])))
 
-(future-facts "probe namespace from outside namespace"
+(facts "probe namespace from outside namespace"
   (let [mem (sink/make-memory)]
     (rem-sink :memory)
     (add-sink :memory (sink/memory-sink mem))
@@ -356,4 +356,4 @@
       (probe.core/probe-ns! 'test-ns)
       (test-ns/foo))
     (fact "function in ns is instrumented"
-      (:fname (sink/last-value mem)) => 'foo)))
+          (:fname (sink/last-value mem)) => 'foo)))
