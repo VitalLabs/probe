@@ -339,8 +339,7 @@
         (defn bar [] nil)
         (probe.core/probe-ns! 'test-ns))
       (test-ns/foo)
-      (test-ns/bar)
-      )
+      (test-ns/bar))
     (fact "all functions in ns are instrumented"
       (map :fname (sink/scan-memory mem)) => ['foo 'bar])))
 
@@ -357,3 +356,33 @@
       (test-ns/foo))
     (fact "function in ns is instrumented"
           (:fname (sink/last-value mem)) => 'foo)))
+
+(facts "unprobe namespace from within namespace"
+  (let [mem (sink/make-memory)]
+    (rem-sink :memory)
+    (add-sink :memory (sink/memory-sink mem))
+    (subscribe #{:probe/fn-enter} :memory)
+
+    (with-temp-ns 'test-ns
+      (within-ns 'test-ns
+        (defn foo [] nil)
+        (probe.core/probe-ns! 'test-ns)
+        (probe.core/unprobe-ns! 'test-ns))
+      (test-ns/foo))
+    (fact "function is not instrumented"
+     (:fname (sink/last-value mem)) => nil)))
+
+(facts "unprobe namespace from outside namespace"
+  (let [mem (sink/make-memory)]
+    (rem-sink :memory)
+    (add-sink :memory (sink/memory-sink mem))
+    (subscribe #{:probe/fn} :memory)
+
+    (with-temp-ns 'test-ns
+      (within-ns 'test-ns
+        (defn foo [] "foo"))
+      (probe.core/probe-ns! 'test-ns)
+      (probe.core/unprobe-ns! 'test-ns)
+      (test-ns/foo))
+    (fact "function is not instrumented"
+      (:fname (sink/last-value mem)) => nil)))

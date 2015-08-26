@@ -549,7 +549,7 @@
   (doall
    (->> vars
         (filter (comp fn? var-get))
-        (map probe-fn!))))
+        (map unprobe-fn!))))
 
 (defn probe-ns! [ns]
   (probe-var-fns (vals (ns-publics ns))))
