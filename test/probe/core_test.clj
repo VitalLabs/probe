@@ -4,6 +4,28 @@
   (:require [clojure.core.async :refer [chan] :as async]
             [probe.sink :as sink]))
 
+(defmacro eval-all
+    [body]
+    `(do ~@(map (fn [form] `(eval '~form)) body)))
+
+(defmacro within-ns
+  "Evaluates body in another namespace.  ns is either a namespace
+  object or a symbol.  This makes it possible to define functions in
+  namespaces other than the current one."
+    [ns & body]
+    `(binding [*ns* (the-ns ~ns)]
+       (eval-all ~body)))
+
+(defmacro with-temp-ns
+  "Creates namespace, runs code outside namespace,
+   and finally removes namespace."
+    [sym & body]
+    `(try
+       (create-ns ~sym)
+       (within-ns ~sym  (clojure.core/refer-clojure))
+       (eval-all ~body)
+       (finally (remove-ns ~sym))))
+
 (def history1 (atom nil))
 
 (defn history-sink1 [state]
@@ -28,7 +50,6 @@
   (fact "can be removed"
     (:name (get-sink :history1))
     => nil?))
-
 
 (facts "subscriptions"
   (unsubscribe-all)
@@ -275,8 +296,19 @@
     (count @history1)
     => 1))
 
-
-
 (future-facts "probe state")
 (future-facts "probe fns")
-(future-facts "probe namespace")
+
+(facts "probe namespace from within namespace"
+  (let [mem (sink/make-memory)]
+    (rem-sink :memory)
+    (add-sink :memory (sink/memory-sink mem))
+    (subscribe #{:probe/fn} :memory)
+
+    (with-temp-ns 'test-ns
+      (within-ns 'test-ns
+        (defn foo [] "foo")
+        (probe.core/probe-ns! 'test-ns))
+      (test-ns/foo))
+    (fact "all functions in ns are instrumented"
+      (:fname (sink/last-value mem)) => 'foo)))
