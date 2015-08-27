@@ -307,9 +307,10 @@
 ;; ==================================
 
 
-(defn- sampler-fn [max]
+(defn- sampler-fn
   "Creates function that returns state once
-   every max calls"
+  every max calls"
+  [max]
   (let [count (atom 1)]
     (fn [state]
       (if (>= @count max)
