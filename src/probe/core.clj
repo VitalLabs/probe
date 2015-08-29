@@ -79,8 +79,7 @@
      (let [prior (get-sink name)]
        (when prior
          (if force?
-           (map (fn [sub] (unlink-from-sink sub))
-                (sink-subscriptions name))
+           (map unlink-from-sink (sink-subscriptions name))
            (throw (ex-info "Sink already configured; remove or force add" {:sink name})))))
      (let [c (chan)
            mix (async/mix c)
@@ -94,8 +93,7 @@
                  :policy-fn policy-fn}]
        (swap! sinks assoc name sink)
        (when force?
-         (map (fn [sub] (link-to-sink sub))
-              (sink-subscriptions name)))
+         (map link-to-sink (sink-subscriptions name)))
        sink)))
 
 (defn swap-sink-policy!
