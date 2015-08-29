@@ -63,9 +63,8 @@
   ([name unsub?]
      (let [{:keys [mix out in] :as sink} (get-sink name)]
        (when sink
-         (doall
-          (map (fn [sub] (unsubscribe (:name sub) (:sink sub)))
-               (sink-subscriptions name)))
+         (doseq [sub (sink-subscriptions name)]
+           (unsubscribe (:name sub) (:sink sub)))
          (async/close! in)
          (async/close! out)
          (assert (nil? (<!! out)))
@@ -80,8 +79,7 @@
      (let [prior (get-sink name)]
        (when prior
          (if force?
-           (map (fn [sub] (unlink-from-sink sub))
-                (sink-subscriptions name))
+           (map unlink-from-sink (sink-subscriptions name))
            (throw (ex-info "Sink already configured; remove or force add" {:sink name})))))
      (let [c (chan)
            mix (async/mix c)
@@ -95,8 +93,7 @@
                  :policy-fn policy-fn}]
        (swap! sinks assoc name sink)
        (when force?
-         (map (fn [sub] (link-to-sink sub))
-              (sink-subscriptions name)))
+         (map link-to-sink (sink-subscriptions name)))
        sink)))
 
 (defn swap-sink-policy!
@@ -251,10 +248,8 @@
        nil)))
 
 (defn unsubscribe-all []
-  (doall
-   (map (fn [[sel sink]]
-          (unsubscribe sel sink))
-        (keys @subscription-table)))
+  (doseq [[sel sink] (keys @subscription-table)]
+    (unsubscribe sel sink))
   {})
 
 ;;
@@ -307,9 +302,10 @@
 ;; ==================================
 
 
-(defn- sampler-fn [max]
+(defn- sampler-fn
   "Creates function that returns state once
-   every max calls"
+  every max calls"
+  [max]
   (let [count (atom 1)]
     (fn [state]
       (if (>= @count max)
@@ -461,7 +457,7 @@
         (var-get (resolve ref))
         (or (and (symbol? ref) (fn? (state? (resolve ref))))
             (and (var? ref) (fn? (var-get ref))))
-        (throw (ex-info "Probing Vars that hold functions is verboten"))
+        (throw (ex-info "Probing Vars that hold functions is verboten" {:ref ref}))
         (and (symbol? ref) (state? (resolve ref)))
         (resolve ref)
         (and (var? ref) (state? (var-get ref)))
