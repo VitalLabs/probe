@@ -63,9 +63,8 @@
   ([name unsub?]
      (let [{:keys [mix out in] :as sink} (get-sink name)]
        (when sink
-         (doall
-          (map (fn [sub] (unsubscribe (:name sub) (:sink sub)))
-               (sink-subscriptions name)))
+         (doseq [sub (sink-subscriptions name)]
+           (unsubscribe (:name sub) (:sink sub)))
          (async/close! in)
          (async/close! out)
          (assert (nil? (<!! out)))
@@ -251,10 +250,8 @@
        nil)))
 
 (defn unsubscribe-all []
-  (doall
-   (map (fn [[sel sink]]
-          (unsubscribe sel sink))
-        (keys @subscription-table)))
+  (doseq [[sel sink] (keys @subscription-table)]
+    (unsubscribe sel sink))
   {})
 
 ;;
