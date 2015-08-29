@@ -462,7 +462,7 @@
         (var-get (resolve ref))
         (or (and (symbol? ref) (fn? (state? (resolve ref))))
             (and (var? ref) (fn? (var-get ref))))
-        (throw (ex-info "Probing Vars that hold functions is verboten"))
+        (throw (ex-info "Probing Vars that hold functions is verboten" {:ref ref}))
         (and (symbol? ref) (state? (resolve ref)))
         (resolve ref)
         (and (var? ref) (state? (var-get ref)))
